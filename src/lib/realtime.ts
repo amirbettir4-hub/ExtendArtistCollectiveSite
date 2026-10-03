@@ -28,6 +28,8 @@ export type SubmissionPayload = {
   votes: number;
 };
 
+export type BattlePhase = "lobby" | "countdown" | "drawing" | "voting" | "results";
+
 export type RoomMessage =
   | { type: "stroke-start"; stroke: Stroke; userId: string }
   | { type: "stroke-point"; x: number; y: number; userId: string }
@@ -36,7 +38,8 @@ export type RoomMessage =
   | { type: "cursor"; x: number; y: number; userId: string }
   | { type: "submission"; submission: SubmissionPayload; userId: string }
   | { type: "vote"; submissionId: string; userId: string }
-  | { type: "chat"; text: string; userId: string; name: string };
+  | { type: "chat"; text: string; userId: string; name: string }
+  | { type: "phase"; phase: BattlePhase; endsAt: number | null; prompt: string; setBy: string };
 
 export function useRealtimeRoom(
   roomId: string,
@@ -126,4 +129,55 @@ export function useRemoteStrokes(
   }, [incoming, myUserId]);
 
   return { remote, liveRef };
+}
+
+/* =========================================================
+   SYNCED BATTLE PHASE + TIMER
+========================================================= */
+
+export function useSyncedPhase(
+  incoming: RoomMessage | null,
+  send: (msg: RoomMessage) => void,
+  myUserId: string
+) {
+  const [phase, setPhase] = useState<BattlePhase>("lobby");
+  const [endsAt, setEndsAt] = useState<number | null>(null);
+  const [prompt, setPrompt] = useState("Draw the place you go to disappear.");
+  const [tick, setTick] = useState(Date.now());
+
+  /* tick every 250ms for a smooth countdown */
+  useEffect(() => {
+    const t = window.setInterval(() => setTick(Date.now()), 250);
+    return () => window.clearInterval(t);
+  }, []);
+
+  /* listen for phase changes broadcast by the host */
+  useEffect(() => {
+    if (!incoming || incoming.type !== "phase") return;
+    setPhase(incoming.phase);
+    setEndsAt(incoming.endsAt);
+    if (incoming.prompt) setPrompt(incoming.prompt);
+  }, [incoming]);
+
+  const secondsLeft = endsAt ? Math.max(0, Math.round((endsAt - tick) / 1000)) : 0;
+
+  /** Broadcast a new phase. Only the host should call this. */
+  const startPhase = useCallback(
+    (next: BattlePhase, durationSec: number | null, newPrompt?: string) => {
+      const end = durationSec ? Date.now() + durationSec * 1000 : null;
+      setPhase(next);
+      setEndsAt(end);
+      if (newPrompt) setPrompt(newPrompt);
+      send({
+        type: "phase",
+        phase: next,
+        endsAt: end,
+        prompt: newPrompt ?? prompt,
+        setBy: myUserId,
+      });
+    },
+    [send, myUserId, prompt]
+  );
+
+  return { phase, secondsLeft, prompt, startPhase };
 }

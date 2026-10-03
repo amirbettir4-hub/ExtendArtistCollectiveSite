@@ -7,8 +7,8 @@ import {
   type Submission, type Post, type Inquiry, type User,
 } from "./store";
 import {
-  useRealtimeRoom, useRemoteStrokes,
-  type PresenceUser, type RoomMessage,
+  useRealtimeRoom, useRemoteStrokes, useSyncedPhase,
+  type PresenceUser, type RoomMessage, type BattlePhase,
 } from "./lib/realtime";
 import {
   loadSubmissions, saveSubmission, castVote as castVoteDB,
@@ -40,6 +40,11 @@ export type Realtime = {
   connected: boolean;
   lastMsg: RoomMessage | null;
   userId: string;
+  phase: BattlePhase;
+  secondsLeft: number;
+  prompt: string;
+  startPhase: (p: BattlePhase, durationSec: number | null, prompt?: string) => void;
+  isHost: boolean;
 };
 
 /* ============ DATA ============ */
@@ -393,7 +398,7 @@ function ArenaLobby({ navigate }: { navigate: (s: Section, screen: string, param
         </div>
       </div>
       <div className="lobby__action">
-        <Button onClick={() => navigate("arena", "prompt")}>Enter the arena <Icon name="arrow" /></Button>
+        <Button onClick={() => navigate("arena", "canvas")}>Enter the arena <Icon name="arrow" /></Button>
         <Button variant="outline" onClick={() => navigate("arena", "watch")}>Watch live</Button>
       </div>
       <section className="waiting">
@@ -410,22 +415,6 @@ function ArenaLobby({ navigate }: { navigate: (s: Section, screen: string, param
   );
 }
 
-function PromptReveal({ navigate }: { navigate: (s: Section, screen: string, param?: string | number) => void }) {
-  return (
-    <main className="prompt-screen">
-      <div className="prompt-screen__top"><span>Tonight's prompt</span><span>Battle {BATTLE_ID}</span></div>
-      <div className="prompt-screen__content">
-        <span className="prompt-screen__count">3</span>
-        <h1>Draw the place<br />you go <em>to disappear.</em></h1>
-        <p>20 minutes · Any medium · One submission</p>
-      </div>
-      <Button variant="quiet" className="prompt-next" onClick={() => navigate("arena", "canvas")}>
-        Skip countdown <Icon name="arrow" />
-      </Button>
-    </main>
-  );
-}
-
 function CanvasView({ navigate, onSubmit, user, realtime }: {
   navigate: (s: Section, screen: string, param?: string | number) => void;
   onSubmit: (s: Submission) => void;
@@ -433,7 +422,6 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
   realtime: Realtime;
 }) {
   const canvasRef = useRef<LiveCanvasHandle>(null);
-  const [secondsLeft, setSecondsLeft] = useState(20 * 60);
   const [tool, setTool] = useState<Tool>("brush");
   const [color, setColor] = useState(BRUSH_COLORS[0]);
   const [size, setSize] = useState(BRUSH_SIZES[1]);
@@ -441,14 +429,24 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
 
   const { remote, liveRef } = useRemoteStrokes(realtime.lastMsg, realtime.userId);
 
+  /* host auto-advances countdown → drawing */
   useEffect(() => {
-    if (secondsLeft <= 0) return;
-    const t = window.setInterval(() => setSecondsLeft((v) => Math.max(0, v - 1)), 1000);
-    return () => window.clearInterval(t);
-  }, [secondsLeft]);
+    if (!realtime.isHost) return;
+    if (realtime.phase !== "countdown") return;
+    if (realtime.secondsLeft > 0) return;
+    realtime.startPhase("drawing", 20 * 60);
+  }, [realtime.phase, realtime.secondsLeft, realtime.isHost]);
 
-  const time = `${String(Math.floor(secondsLeft / 60)).padStart(2, "0")}:${String(secondsLeft % 60).padStart(2, "0")}`;
-  const timeUp = secondsLeft === 0;
+  /* host auto-advances drawing → voting */
+  useEffect(() => {
+    if (!realtime.isHost) return;
+    if (realtime.phase !== "drawing") return;
+    if (realtime.secondsLeft > 0) return;
+    realtime.startPhase("voting", 60);
+  }, [realtime.phase, realtime.secondsLeft, realtime.isHost]);
+
+  const time = `${String(Math.floor(realtime.secondsLeft / 60)).padStart(2, "0")}:${String(realtime.secondsLeft % 60).padStart(2, "0")}`;
+  const canDraw = realtime.phase === "drawing" && realtime.secondsLeft > 0;
 
   const handleSubmit = () => {
     if (!canvasRef.current || submitted) return;
@@ -457,12 +455,16 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
       navigate("auth", "signin");
       return;
     }
+    if (realtime.phase !== "drawing" && realtime.phase !== "voting") {
+      alert("Wait for the drawing phase.");
+      return;
+    }
     const strokes = canvasRef.current.getStrokes();
     const image = canvasRef.current.toDataURL();
     const name = user?.name || (user?.email ? user.email.split("@")[0] : "Guest");
     const sub: Submission = {
       id: uid(), artistName: name, artistAvatar: portraits[0],
-      image, strokes, prompt: BATTLE_PROMPT, battleId: BATTLE_ID,
+      image, strokes, prompt: realtime.prompt, battleId: BATTLE_ID,
       createdAt: Date.now(), votes: 0,
     };
     onSubmit(sub);
@@ -471,23 +473,84 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
     navigate("arena", "voting");
   };
 
+  /* pre-battle waiting room */
+  if (realtime.phase === "lobby") {
+    return (
+      <main className="canvas-screen">
+        <div className={`rt-badge ${!realtime.connected ? "rt-badge--off" : realtime.present.length > 1 ? "rt-badge--on" : ""}`}>
+          <span className="live-dot" />
+          {realtime.connected ? `Live · ${realtime.present.length} here` : "Connecting…"}
+        </div>
+
+        <div className="canvas-waiting">
+          <span className="kicker">Battle {BATTLE_ID} · Waiting for artists</span>
+          <h1>Ready when<br /><em>you are.</em></h1>
+          <p>{realtime.present.length} in the room</p>
+
+          {realtime.isHost ? (
+            <Button onClick={() => realtime.startPhase("countdown", 3)}>
+              Start the battle <Icon name="arrow" />
+            </Button>
+          ) : (
+            <p className="canvas-waiting__hint">Waiting for the host to start…</p>
+          )}
+        </div>
+
+        <ArenaChat realtime={realtime} />
+      </main>
+    );
+  }
+
+  /* 3-2-1 countdown */
+  if (realtime.phase === "countdown") {
+    return (
+      <main className="prompt-screen">
+        <div className="prompt-screen__top">
+          <span>Tonight's prompt</span>
+          <span>Battle {BATTLE_ID}</span>
+        </div>
+        <div className="prompt-screen__content">
+          <span className="prompt-screen__count">{realtime.secondsLeft || 3}</span>
+          <h1>{realtime.prompt}</h1>
+          <p>20 minutes · Any medium · One submission</p>
+        </div>
+      </main>
+    );
+  }
+
+  /* voting phase without submitting yet */
+  if (realtime.phase === "voting" && !submitted) {
+    return (
+      <main className="page">
+        <StateBlock
+          kind="empty"
+          message="Time's up. Submissions are closed."
+          action={<Button onClick={() => navigate("arena", "voting")}>Go to voting <Icon name="arrow" /></Button>}
+        />
+      </main>
+    );
+  }
+
   return (
     <main className="canvas-screen">
       <div className={`rt-badge ${!realtime.connected ? "rt-badge--off" : realtime.present.length > 1 ? "rt-badge--on" : ""}`}>
         <span className="live-dot" />
         {realtime.connected ? `Live · ${realtime.present.length} here` : "Connecting…"}
       </div>
+
       <div className="canvas-timer">
-        <span>Time remaining</span><strong>{time}</strong>
-        {!timeUp && <button className="canvas-skip" onClick={() => setSecondsLeft(0)}>skip (demo)</button>}
+        <span>{canDraw ? "Time remaining" : "Time up"}</span>
+        <strong>{canDraw ? time : "00:00"}</strong>
       </div>
+
       <div className="canvas-stage">
         <LiveCanvas
-          ref={canvasRef} color={color} size={size} mode={tool} locked={timeUp}
+          ref={canvasRef} color={color} size={size} mode={tool} locked={!canDraw}
           myUserId={realtime.userId} send={realtime.send}
           remoteStrokes={remote} liveStrokesRef={liveRef}
         />
       </div>
+
       <div className="toolbar">
         <button className={`toolbar__btn ${tool === "brush" ? "selected" : ""}`} onClick={() => setTool("brush")}><Icon name="brush" /><span>Brush</span></button>
         <button className={`toolbar__btn ${tool === "eraser" ? "selected" : ""}`} onClick={() => setTool("eraser")}><Icon name="eraser" /><span>Eraser</span></button>
@@ -507,8 +570,13 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
         <button className="toolbar__btn" onClick={() => canvasRef.current?.undo()}><Icon name="redo" /><span>Undo</span></button>
         <button className="toolbar__btn" onClick={() => canvasRef.current?.clear()}><Icon name="trash" /><span>Clear</span></button>
       </div>
-      <Button disabled={!timeUp || submitted} className="canvas-submit" onClick={handleSubmit}>
-        {submitted ? "Submitted" : timeUp ? "Submit work" : "Submit when time ends"}
+
+      <Button
+        disabled={canDraw || submitted}
+        className="canvas-submit"
+        onClick={handleSubmit}
+      >
+        {submitted ? "Submitted" : canDraw ? "Submit when time ends" : "Submit work"}
       </Button>
 
       <ArenaChat realtime={realtime} />
@@ -550,6 +618,7 @@ function SpectatorView({ navigate, realtime }: {
   }, [remote, liveRef]);
 
   const artists = realtime.present.filter((p) => p.role === "artist");
+  const time = `${String(Math.floor(realtime.secondsLeft / 60)).padStart(2, "0")}:${String(realtime.secondsLeft % 60).padStart(2, "0")}`;
 
   return (
     <main className="canvas-screen canvas-screen--watch">
@@ -558,11 +627,24 @@ function SpectatorView({ navigate, realtime }: {
         {realtime.connected ? `Live · ${realtime.present.length} here` : "Connecting…"}
       </div>
       <div className="spectator-badge"><span className="live-dot" />Watching live</div>
+
+      <div className="canvas-timer">
+        <span>
+          Battle {BATTLE_ID} · {realtime.phase === "drawing" ? "Time remaining" : realtime.phase}
+        </span>
+        <strong>{realtime.phase === "drawing" ? time : "—:—"}</strong>
+      </div>
+
       <div className="canvas-stage">
         <canvas ref={canvasRef} width={1200} height={900} className="drawing-canvas drawing-canvas--watch" />
       </div>
+
       <div className="spectator-footer">
-        <span>{artists.length === 0 ? "Waiting for artists…" : `${artists.length} artist${artists.length === 1 ? "" : "s"} drawing`}</span>
+        <span>
+          {realtime.phase === "lobby"
+            ? "Waiting for the battle to start…"
+            : `${artists.length} artist${artists.length === 1 ? "" : "s"} in the room`}
+        </span>
         <Button variant="outline" onClick={() => navigate("arena", "lobby")}>Back to lobby <Icon name="arrow" /></Button>
       </div>
 
@@ -989,8 +1071,19 @@ export default function App() {
     role: "artist",
     joinedAt: Date.now(),
   };
+
   const { send, present, connected } = useRealtimeRoom("047", presence, (m) => setLastMsg(m));
-  const realtime: Realtime = { send, present, connected, lastMsg, userId };
+  const { phase, secondsLeft, prompt, startPhase } = useSyncedPhase(lastMsg, send, userId);
+
+  /* host = earliest joined artist */
+  const artists = present.filter((p) => p.role === "artist");
+  const host = artists.length > 0 ? artists.reduce((a, b) => (a.joinedAt < b.joinedAt ? a : b)) : null;
+  const isHost = host?.userId === userId;
+
+  const realtime: Realtime = {
+    send, present, connected, lastMsg, userId,
+    phase, secondsLeft, prompt, startPhase, isHost,
+  };
 
   useEffect(() => {
     if (!lastMsg) return;
@@ -1036,7 +1129,7 @@ export default function App() {
     }
   };
 
-  const immersive = section === "arena" && (screen === "prompt" || screen === "canvas" || screen === "watch");
+  const immersive = section === "arena" && (screen === "canvas" || screen === "watch");
   const wallScreen: WallScreen =
     screen === "detail" ? "detail" : screen === "artists" ? "artists" : "grid";
 
@@ -1073,7 +1166,6 @@ export default function App() {
         <Subnav
           items={[
             { id: "lobby" as ArenaScreen, label: "Lobby" },
-            { id: "prompt" as ArenaScreen, label: "Prompt" },
             { id: "canvas" as ArenaScreen, label: "Canvas" },
             { id: "watch" as ArenaScreen, label: "Watch" },
             { id: "voting" as ArenaScreen, label: "Voting" },
@@ -1091,7 +1183,6 @@ export default function App() {
       {section === "wall" && wallScreen === "artists" && <ArtistsDirectory navigate={navigate} />}
 
       {section === "arena" && screen === "lobby" && <ArenaLobby navigate={navigate} />}
-      {section === "arena" && screen === "prompt" && <PromptReveal navigate={navigate} />}
       {section === "arena" && screen === "canvas" && (
         <CanvasView navigate={navigate} onSubmit={addSubmission} user={user} realtime={realtime} />
       )}
