@@ -35,7 +35,8 @@ export type RoomMessage =
   | { type: "clear"; userId: string }
   | { type: "cursor"; x: number; y: number; userId: string }
   | { type: "submission"; submission: SubmissionPayload; userId: string }
-  | { type: "vote"; submissionId: string; userId: string };
+  | { type: "vote"; submissionId: string; userId: string }
+  | { type: "chat"; text: string; userId: string; name: string };
 
 export function useRealtimeRoom(
   roomId: string,

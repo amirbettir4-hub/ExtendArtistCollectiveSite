@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { TimelapseReplay } from "./components/TimelapseReplay";
 import { LiveCanvas, type LiveCanvasHandle } from "./components/LiveCanvas";
+import { ArenaChat } from "./components/ArenaChat";
 import {
   uid,
   type Submission, type Post, type Inquiry, type User,
@@ -12,6 +13,7 @@ import {
 import {
   loadSubmissions, saveSubmission, castVote as castVoteDB,
   loadPosts, savePost,
+  saveInquiry, loadInquiriesForArtist,
 } from "./lib/db";
 import { signInWithMagicLink, signOut as authSignOut, onAuthChange } from "./lib/auth";
 
@@ -32,7 +34,7 @@ type Work = {
   id: number; image: string; title: string; artist: string;
   price: number; medium: string; dimensions: string; year: number; available: boolean;
 };
-type Realtime = {
+export type Realtime = {
   send: (msg: RoomMessage) => void;
   present: PresenceUser[];
   connected: boolean;
@@ -264,11 +266,27 @@ function WallGrid({ navigate }: { navigate: (s: Section, screen: string, param?:
   );
 }
 
-function InquiryModal({ work, onClose, onSent }: { work: Work; onClose: () => void; onSent: (i: Inquiry) => void }) {
+function InquiryModal({ work, onClose }: { work: Work; onClose: () => void }) {
   const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    const ok = await saveInquiry(work.id, work.title, work.artist, name, email, message);
+    setBusy(false);
+    if (!ok) {
+      setError("Could not send. Try again.");
+      return;
+    }
+    setSent(true);
+  };
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -285,17 +303,16 @@ function InquiryModal({ work, onClose, onSent }: { work: Work; onClose: () => vo
               <div><span className="kicker">Inquire about</span><h2>{work.title}</h2></div>
               <button className="modal__close" onClick={onClose}>✕</button>
             </div>
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              onSent({ id: uid(), workId: work.id, workTitle: work.title, name, email, message, createdAt: Date.now() });
-              setSent(true);
-            }}>
+            <form onSubmit={handleSubmit}>
               <label>Your name<input value={name} onChange={(e) => setName(e.target.value)} required /></label>
               <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
               <label>Message<textarea rows={4} value={message} onChange={(e) => setMessage(e.target.value)} required /></label>
+              {error && <p className="auth__error">{error}</p>}
               <div className="modal__footer">
                 <span className="modal__price">€{work.price.toLocaleString()}</span>
-                <Button type="submit">Send inquiry <Icon name="arrow" /></Button>
+                <Button type="submit" disabled={busy}>
+                  {busy ? "Sending…" : "Send inquiry"} <Icon name="arrow" />
+                </Button>
               </div>
             </form>
           </>
@@ -305,9 +322,9 @@ function InquiryModal({ work, onClose, onSent }: { work: Work; onClose: () => vo
   );
 }
 
-function ArtworkDetail({ id, navigate, onInquiry }: {
-  id: number; navigate: (s: Section, screen: string, param?: string | number) => void;
-  onInquiry: (i: Inquiry) => void;
+function ArtworkDetail({ id, navigate }: {
+  id: number;
+  navigate: (s: Section, screen: string, param?: string | number) => void;
 }) {
   const [showInquiry, setShowInquiry] = useState(false);
   const work = artworks[id];
@@ -333,7 +350,7 @@ function ArtworkDetail({ id, navigate, onInquiry }: {
           <Button variant="outline" onClick={() => navigate("studio", "room")}>View artist's room</Button>
         </div>
       </div>
-      {showInquiry && <InquiryModal work={work} onClose={() => setShowInquiry(false)} onSent={onInquiry} />}
+      {showInquiry && <InquiryModal work={work} onClose={() => setShowInquiry(false)} />}
     </main>
   );
 }
@@ -493,6 +510,8 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
       <Button disabled={!timeUp || submitted} className="canvas-submit" onClick={handleSubmit}>
         {submitted ? "Submitted" : timeUp ? "Submit work" : "Submit when time ends"}
       </Button>
+
+      <ArenaChat realtime={realtime} />
     </main>
   );
 }
@@ -546,6 +565,8 @@ function SpectatorView({ navigate, realtime }: {
         <span>{artists.length === 0 ? "Waiting for artists…" : `${artists.length} artist${artists.length === 1 ? "" : "s"} drawing`}</span>
         <Button variant="outline" onClick={() => navigate("arena", "lobby")}>Back to lobby <Icon name="arrow" /></Button>
       </div>
+
+      <ArenaChat realtime={realtime} />
     </main>
   );
 }
@@ -748,26 +769,115 @@ function Composer({ onPost, user, navigate }: {
   );
 }
 
-function ArtistRoom() {
+function ArtistRoom({ user }: { user: User | null }) {
+  const [tab, setTab] = useState<"works" | "process" | "inbox">("process");
+  const [inquiries, setInquiries] = useState<Inquiry[]>([]);
+  const [loadingInbox, setLoadingInbox] = useState(false);
+
+  const ARTIST_NAME = "June Ori";
+
+  useEffect(() => {
+    if (tab !== "inbox") return;
+    if (!user) return;
+    setLoadingInbox(true);
+    loadInquiriesForArtist(ARTIST_NAME).then((rows) => {
+      setInquiries(rows);
+      setLoadingInbox(false);
+    });
+  }, [tab, user]);
+
   return (
     <main className="room page">
       <div className="room__profile">
         <img src={portraits[2]} alt="June Ori" />
-        <div><span className="kicker">Artist room · London</span><h1>June Ori</h1>
-          <p>Painter working between memory, imagined architecture, and the color of early mornings.</p></div>
+        <div>
+          <span className="kicker">Artist room · London</span>
+          <h1>June Ori</h1>
+          <p>Painter working between memory, imagined architecture, and the color of early mornings.</p>
+        </div>
         <Button variant="outline">Visit website <Icon name="arrow" /></Button>
       </div>
-      <nav className="room-tabs"><button>Works</button><button className="active">Process <span>08</span></button><button>About</button></nav>
-      <div className="process-intro"><h2>Process</h2><p>Studies, false starts, and works still becoming.</p></div>
-      <div className="process-grid">
-        {art.slice(0, 6).map((image, index) => (
-          <article key={image}>
-            <img src={image} alt={`Work in progress ${index + 1}`} />
-            <div><span>WIP · {["Oil on linen", "Graphite", "Mixed media"][index % 3]}</span>
-              <strong>{["Before the city", "North room study", "A softer boundary", "Blue hour no. 4", "Weather drawing", "Notes on leaving"][index]}</strong></div>
-          </article>
-        ))}
-      </div>
+
+      <nav className="room-tabs">
+        <button className={tab === "works" ? "active" : ""} onClick={() => setTab("works")}>Works</button>
+        <button className={tab === "process" ? "active" : ""} onClick={() => setTab("process")}>
+          Process <span>08</span>
+        </button>
+        <button className={tab === "inbox" ? "active" : ""} onClick={() => setTab("inbox")}>
+          Inbox {inquiries.length > 0 && <span>{inquiries.length}</span>}
+        </button>
+      </nav>
+
+      {tab === "process" && (
+        <>
+          <div className="process-intro">
+            <h2>Process</h2>
+            <p>Studies, false starts, and works still becoming.</p>
+          </div>
+          <div className="process-grid">
+            {art.slice(0, 6).map((image, index) => (
+              <article key={image}>
+                <img src={image} alt={`Work in progress ${index + 1}`} />
+                <div>
+                  <span>WIP · {["Oil on linen", "Graphite", "Mixed media"][index % 3]}</span>
+                  <strong>{["Before the city", "North room study", "A softer boundary", "Blue hour no. 4", "Weather drawing", "Notes on leaving"][index]}</strong>
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      )}
+
+      {tab === "works" && (
+        <div className="process-grid">
+          {art.map((image, index) => (
+            <article key={image}>
+              <img src={image} alt={`Work ${index + 1}`} />
+              <div>
+                <span>Available</span>
+                <strong>{["Salt marsh study", "North room", "Before the city", "Blue hour no. 4", "Weather drawing", "Notes on leaving", "A softer boundary", "Interval"][index]}</strong>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {tab === "inbox" && (
+        <>
+          {!user && (
+            <StateBlock kind="empty" message="Sign in as the artist to see inquiries." />
+          )}
+          {user && loadingInbox && <StateBlock kind="loading" message="Loading inbox…" />}
+          {user && !loadingInbox && inquiries.length === 0 && (
+            <StateBlock kind="empty" message="No inquiries yet." />
+          )}
+          {user && !loadingInbox && inquiries.length > 0 && (
+            <div className="inbox">
+              {inquiries.map((inq) => (
+                <article className="inbox__item" key={inq.id}>
+                  <header className="inbox__head">
+                    <div>
+                      <strong>{inq.buyerName || inq.name}</strong>
+                      <span>{inq.buyerEmail || inq.email}</span>
+                    </div>
+                    <span className="inbox__date">{new Date(inq.createdAt).toLocaleDateString()}</span>
+                  </header>
+                  <div className="inbox__work">
+                    <span className="kicker">About</span>
+                    <strong>{inq.workTitle}</strong>
+                  </div>
+                  <p className="inbox__msg">{inq.message}</p>
+                  <div className="inbox__actions">
+                    <a href={`mailto:${inq.buyerEmail || inq.email}?subject=Re: ${inq.workTitle}`}>
+                      <Button variant="outline">Reply by email <Icon name="arrow" /></Button>
+                    </a>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </main>
   );
 }
@@ -850,21 +960,17 @@ export default function App() {
   const [posts, setPosts] = useState<Post[]>(seedPosts);
   const [postsLoading, setPostsLoading] = useState(true);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
-  const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [savedIds, setSavedIds] = useState<string[]>([]);
 
-  /* subscribe to real Supabase auth */
   useEffect(() => {
     const unsubscribe = onAuthChange((u) => setUser(u));
     return unsubscribe;
   }, []);
 
-  /* load submissions from DB */
   useEffect(() => {
     loadSubmissions(BATTLE_ID).then(setSubmissions);
   }, []);
 
-  /* load studio posts from DB */
   useEffect(() => {
     setPostsLoading(true);
     loadPosts().then((rows) => {
@@ -873,7 +979,6 @@ export default function App() {
     });
   }, []);
 
-  /* shared realtime channel at App level */
   const [lastMsg, setLastMsg] = useState<RoomMessage | null>(null);
   const [guestId] = useState(() => `app-${Math.random().toString(36).slice(2, 8)}`);
   const userId = user?.email ?? guestId;
@@ -887,7 +992,6 @@ export default function App() {
   const { send, present, connected } = useRealtimeRoom("047", presence, (m) => setLastMsg(m));
   const realtime: Realtime = { send, present, connected, lastMsg, userId };
 
-  /* merge realtime submissions + votes into local state */
   useEffect(() => {
     if (!lastMsg) return;
     if (lastMsg.type === "submission") {
@@ -903,7 +1007,6 @@ export default function App() {
 
   const toggleSaved = (id: string) =>
     setSavedIds((v) => (v.includes(id) ? v.filter((x) => x !== id) : [...v, id]));
-  const addInquiry = (i: Inquiry) => setInquiries((v) => [i, ...v]);
 
   const addPost = async (p: Post) => {
     setPosts((v) => [p, ...v]);
@@ -932,8 +1035,6 @@ export default function App() {
       alert("Could not save vote. Please sign in first.");
     }
   };
-
-  void inquiries;
 
   const immersive = section === "arena" && (screen === "prompt" || screen === "canvas" || screen === "watch");
   const wallScreen: WallScreen =
@@ -985,7 +1086,7 @@ export default function App() {
 
       {section === "wall" && wallScreen === "grid" && <WallGrid navigate={navigate} />}
       {section === "wall" && wallScreen === "detail" && (
-        <ArtworkDetail id={parseInt(param || "0", 10)} navigate={navigate} onInquiry={addInquiry} />
+        <ArtworkDetail id={parseInt(param || "0", 10)} navigate={navigate} />
       )}
       {section === "wall" && wallScreen === "artists" && <ArtistsDirectory navigate={navigate} />}
 
@@ -1014,7 +1115,7 @@ export default function App() {
       {section === "studio" && screen === "composer" && (
         <Composer onPost={addPost} user={user} navigate={navigate} />
       )}
-      {section === "studio" && screen === "room" && <ArtistRoom />}
+      {section === "studio" && screen === "room" && <ArtistRoom user={user} />}
 
       {section === "auth" && (
         <AuthPage

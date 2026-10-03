@@ -518,6 +518,125 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
 }
 
 /* =========================================================
+   ARENA LIVE CHAT
+========================================================= */
+.arena-chat {
+  position: absolute;
+  right: var(--space-4);
+  bottom: 6rem;
+  z-index: 6;
+  width: 20rem;
+  max-height: 24rem;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 6px 24px rgba(43,33,26,0.08);
+}
+.arena-chat__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+.arena-chat__close {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.arena-chat__list {
+  padding: var(--space-2) var(--space-3);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 6rem;
+}
+.arena-chat__empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-style: italic;
+  text-align: center;
+}
+.arena-chat__msg {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+.arena-chat__who {
+  color: var(--terracotta);
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 650;
+}
+.arena-chat__msg--me .arena-chat__who { color: var(--muted); }
+.arena-chat__text {
+  font-family: var(--serif);
+  color: var(--ink);
+  word-wrap: break-word;
+}
+.arena-chat__compose {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  border-top: 1px solid var(--line);
+}
+.arena-chat__compose input {
+  border: 0;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  font-size: 0.8rem;
+  outline: none;
+}
+.arena-chat__compose button {
+  border: 0;
+  border-left: 1px solid var(--line);
+  padding: 0 var(--space-3);
+  background: transparent;
+  font-size: 0.68rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.arena-chat__compose button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.arena-chat-toggle {
+  position: absolute;
+  right: var(--space-4);
+  bottom: 6rem;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.6rem 1rem;
+  background: var(--ink);
+  color: var(--paper);
+  border: 1px solid var(--ink);
+  font-size: 0.68rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.arena-chat-toggle span {
+  background: var(--terracotta);
+  color: var(--paper);
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.6rem;
+}
+
+/* =========================================================
    ARENA VOTING
 ========================================================= */
 .title-row { display: flex; justify-content: space-between; align-items: end; }
@@ -811,6 +930,38 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
 .process-grid span, .process-grid strong { display: block; }
 .process-grid span { color: var(--terracotta); font-size: 0.55rem; letter-spacing: 0.08em; text-transform: uppercase; }
 .process-grid strong { margin-top: var(--space-1); font-family: var(--serif); font-size: 1.1rem; font-weight: 400; }
+
+/* =========================================================
+   ARTIST INBOX
+========================================================= */
+.inbox {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+}
+.inbox__item {
+  padding: var(--space-5);
+  border: 1px solid var(--line);
+  background: var(--white);
+}
+.inbox__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: var(--space-4);
+}
+.inbox__head strong,
+.inbox__head span { display: block; }
+.inbox__head strong { font-family: var(--serif); font-size: 1.15rem; font-weight: 400; }
+.inbox__head span { color: var(--muted); font-size: 0.7rem; margin-top: 0.15rem; }
+.inbox__date { color: var(--muted); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.inbox__work { margin-bottom: var(--space-3); }
+.inbox__work strong { display: block; margin-top: var(--space-1); font-family: var(--serif); font-size: 1.05rem; font-weight: 400; }
+.inbox__msg { margin: 0 0 var(--space-4); font-family: var(--serif); font-size: 1.05rem; line-height: 1.55; }
+.inbox__actions { display: flex; justify-content: flex-end; }
+.inbox__actions a { text-decoration: none; }
 
 /* =========================================================
    THE WALL
@@ -1188,6 +1339,19 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
     grid-template-columns: none;
     border-bottom: 0;
     border-right: 1px solid var(--line);
+  }
+
+  .arena-chat {
+    left: var(--space-3);
+    right: var(--space-3);
+    width: auto;
+    bottom: 5rem;
+    max-height: 50vh;
+  }
+  .arena-chat-toggle {
+    left: var(--space-3);
+    right: auto;
+    bottom: 5rem;
   }
 
   .title-row { display: block; }
