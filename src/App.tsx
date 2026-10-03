@@ -10,6 +10,7 @@ import {
   type PresenceUser, type RoomMessage,
 } from "./lib/realtime";
 import { loadSubmissions, saveSubmission, incrementVote } from "./lib/db";
+import { signInWithMagicLink, signOut as authSignOut, onAuthChange } from "./lib/auth";
 
 console.log("SUPABASE CHECK →", import.meta.env.VITE_SUPABASE_URL);
 
@@ -733,28 +734,71 @@ function ArtistRoom() {
 }
 
 /* ============ AUTH ============ */
-function AuthPage({ mode, navigate, onSignIn }: {
-  mode: AuthScreen; navigate: (s: Section, screen: string, param?: string | number) => void; onSignIn: (u: User) => void;
+function AuthPage({ mode, navigate, onSignedIn }: {
+  mode: AuthScreen;
+  navigate: (s: Section, screen: string, param?: string | number) => void;
+  onSignedIn: (email: string) => void;
 }) {
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const isSignin = mode === "signin";
-  const handleSubmit = (e: React.FormEvent) => {
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSignIn({ email, name: name || email.split("@")[0] });
-    navigate("wall", "grid");
+    setError(null);
+    setBusy(true);
+    try {
+      await signInWithMagicLink(email);
+      onSignedIn(email);
+      setSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setBusy(false);
+    }
   };
+
+  if (sent) {
+    return (
+      <main className="auth page">
+        <div className="auth__card">
+          <span className="kicker">Check your email</span>
+          <h1>Link sent</h1>
+          <p className="auth__info">
+            We sent a sign-in link to <strong>{email}</strong>.
+            Open it from the same browser and you'll be logged in.
+          </p>
+          <Button variant="outline" onClick={() => setSent(false)}>Use a different email</Button>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="auth page">
       <div className="auth__card">
         <span className="kicker">{isSignin ? "Welcome back" : "Join the collective"}</span>
         <h1>{isSignin ? "Sign in" : "Create account"}</h1>
         <form onSubmit={handleSubmit}>
-          {!isSignin && <label>Name<input value={name} onChange={(e) => setName(e.target.value)} required /></label>}
-          <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
-          <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={4} /></label>
-          <Button type="submit">{isSignin ? "Sign in" : "Create account"} <Icon name="arrow" /></Button>
+          {!isSignin && (
+            <label>Name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Optional" /></label>
+          )}
+          <label>Email
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoFocus
+            />
+          </label>
+          {error && <p className="auth__error">{error}</p>}
+          <Button type="submit" disabled={busy || !email}>
+            {busy ? "Sending…" : "Send sign-in link"} <Icon name="arrow" />
+          </Button>
         </form>
         <button className="auth__switch" onClick={() => navigate("auth", isSignin ? "signup" : "signin")}>
           {isSignin ? "No account? Sign up" : "Already have an account? Sign in"}
@@ -769,11 +813,17 @@ export default function App() {
   const { route, navigate } = useHashRoute();
   const { section, screen, param } = route;
 
-  const [user, setUser] = usePersisted<User | null>("cg.user", null);
+  const [user, setUser] = useState<User | null>(null);
   const [posts, setPosts] = usePersisted<Post[]>("cg.posts", seedPosts);
   const [submissions, setSubmissions] = usePersisted<Submission[]>("cg.submissions", []);
   const [inquiries, setInquiries] = usePersisted<Inquiry[]>("cg.inquiries", []);
   const [savedIds, setSavedIds] = usePersisted<string[]>("cg.saved", []);
+
+  /* subscribe to real Supabase auth */
+  useEffect(() => {
+    const unsubscribe = onAuthChange((u) => setUser(u));
+    return unsubscribe;
+  }, []);
 
   /* load submissions from Supabase on first render */
   useEffect(() => {
@@ -834,7 +884,14 @@ export default function App() {
 
   return (
     <div className={`app ${immersive ? "app--immersive" : ""}`}>
-      {!immersive && <Header section={section} user={user} onSignOut={() => setUser(null)} navigate={navigate} />}
+      {!immersive && (
+        <Header
+          section={section}
+          user={user}
+          onSignOut={() => { authSignOut(); setUser(null); }}
+          navigate={navigate}
+        />
+      )}
 
       {!immersive && section === "wall" && (
         <Subnav
@@ -897,7 +954,11 @@ export default function App() {
       {section === "studio" && screen === "room" && <ArtistRoom />}
 
       {section === "auth" && (
-        <AuthPage mode={(screen as AuthScreen) || "signin"} navigate={navigate} onSignIn={setUser} />
+        <AuthPage
+          mode={(screen as AuthScreen) || "signin"}
+          navigate={navigate}
+          onSignedIn={() => {}}
+        />
       )}
     </div>
   );
