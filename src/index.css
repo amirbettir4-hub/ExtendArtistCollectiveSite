@@ -564,6 +564,18 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
 .vote-card .button { width: 100%; margin-top: var(--space-2); }
 .confirm-vote { position: sticky; bottom: var(--space-4); margin: var(--space-6) auto 0; }
 
+.vote-warning {
+  margin: var(--space-5) 0;
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  background: var(--paper-deep);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.vote-warning span { font-family: var(--serif); font-size: 1.05rem; }
+
 /* =========================================================
    ARENA RESULTS
 ========================================================= */
@@ -1052,6 +1064,17 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
   color: var(--muted);
   font-size: 0.7rem;
   text-decoration: underline;
+}
+.auth__info {
+  margin: var(--space-3) 0 var(--space-5);
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+.auth__error {
+  margin: 0;
+  color: #b3261e;
+  font-size: 0.72rem;
 }
 
 /* =========================================================

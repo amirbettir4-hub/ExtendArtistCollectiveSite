@@ -9,7 +9,7 @@ import {
   useRealtimeRoom, useRemoteStrokes,
   type PresenceUser, type RoomMessage,
 } from "./lib/realtime";
-import { loadSubmissions, saveSubmission, incrementVote } from "./lib/db";
+import { loadSubmissions, saveSubmission, castVote as castVoteDB } from "./lib/db";
 import { signInWithMagicLink, signOut as authSignOut, onAuthChange } from "./lib/auth";
 
 console.log("SUPABASE CHECK →", import.meta.env.VITE_SUPABASE_URL);
@@ -432,6 +432,11 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
 
   const handleSubmit = () => {
     if (!canvasRef.current || submitted) return;
+    if (!user) {
+      alert("Sign in first to submit your work.");
+      navigate("auth", "signin");
+      return;
+    }
     const strokes = canvasRef.current.getStrokes();
     const image = canvasRef.current.toDataURL();
     const name = user?.name || (user?.email ? user.email.split("@")[0] : "Guest");
@@ -542,10 +547,11 @@ function SpectatorView({ navigate, realtime }: {
   );
 }
 
-function Voting({ navigate, submissions, onVote }: {
+function Voting({ navigate, submissions, onVote, user }: {
   navigate: (s: Section, screen: string, param?: string | number) => void;
   submissions: Submission[];
   onVote: (id: string) => void;
+  user: User | null;
 }) {
   const [picked, setPicked] = useState<string | null>(null);
   const battle = submissions.filter((s) => s.battleId === BATTLE_ID);
@@ -559,6 +565,12 @@ function Voting({ navigate, submissions, onVote }: {
         <div><span className="kicker">Blind vote</span><h1>Choose the work<br />that stays with you.</h1></div>
         <div className="vote-timer"><span>Voting closes in</span><strong>00:47</strong></div>
       </div>
+      {!user && (
+        <div className="vote-warning">
+          <span>Sign in to vote.</span>
+          <Button variant="outline" onClick={() => navigate("auth", "signin")}>Sign in</Button>
+        </div>
+      )}
       <div className="vote-grid">
         {battle.map((sub, index) => (
           <article className="vote-card" key={sub.id}>
@@ -567,13 +579,21 @@ function Voting({ navigate, submissions, onVote }: {
               <span>0{index + 1}</span>
             </div>
             <div className="vote-card__votes">{sub.votes} {sub.votes === 1 ? "vote" : "votes"}</div>
-            <Button variant={picked === sub.id ? "primary" : "outline"} onClick={() => setPicked(sub.id)}>
+            <Button
+              variant={picked === sub.id ? "primary" : "outline"}
+              disabled={!user}
+              onClick={() => setPicked(sub.id)}
+            >
               {picked === sub.id ? "Vote selected" : "Vote for this work"}
             </Button>
           </article>
         ))}
       </div>
-      {picked && <Button className="confirm-vote" onClick={() => { onVote(picked); navigate("arena", "results"); }}>Confirm vote <Icon name="arrow" /></Button>}
+      {picked && (
+        <Button className="confirm-vote" onClick={() => { onVote(picked); navigate("arena", "results"); }}>
+          Confirm vote <Icon name="arrow" />
+        </Button>
+      )}
     </main>
   );
 }
@@ -865,15 +885,23 @@ export default function App() {
   const addInquiry = (i: Inquiry) => setInquiries((v) => [i, ...v]);
   const addPost = (p: Post) => setPosts((v) => [p, ...v]);
 
-  const addSubmission = (s: Submission) => {
+  const addSubmission = async (s: Submission) => {
     setSubmissions((v) => [...v, s]);
-    saveSubmission(s);
+    const ok = await saveSubmission(s);
+    if (!ok) {
+      alert("Could not save submission. Please sign in first.");
+      setSubmissions((v) => v.filter((x) => x.id !== s.id));
+    }
   };
 
-  const castVote = (id: string) => {
+  const castVote = async (id: string) => {
     setSubmissions((v) => v.map((s) => (s.id === id ? { ...s, votes: s.votes + 1 } : s)));
     send({ type: "vote", submissionId: id, userId });
-    incrementVote(id);
+    const ok = await castVoteDB(id);
+    if (!ok) {
+      setSubmissions((v) => v.map((s) => (s.id === id ? { ...s, votes: s.votes - 1 } : s)));
+      alert("Could not save vote. Please sign in first.");
+    }
   };
 
   void inquiries;
@@ -939,7 +967,7 @@ export default function App() {
       )}
       {section === "arena" && screen === "watch" && <SpectatorView navigate={navigate} realtime={realtime} />}
       {section === "arena" && screen === "voting" && (
-        <Voting navigate={navigate} submissions={submissions} onVote={castVote} />
+        <Voting navigate={navigate} submissions={submissions} onVote={castVote} user={user} />
       )}
       {section === "arena" && screen === "results" && (
         <Results navigate={navigate} submissions={submissions} />
