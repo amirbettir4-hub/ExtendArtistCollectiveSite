@@ -9,6 +9,7 @@ import {
   useRealtimeRoom, useRemoteStrokes,
   type PresenceUser, type RoomMessage,
 } from "./lib/realtime";
+import { loadSubmissions, saveSubmission, incrementVote } from "./lib/db";
 
 console.log("SUPABASE CHECK →", import.meta.env.VITE_SUPABASE_URL);
 
@@ -84,12 +85,6 @@ const seedPosts: Post[] = [
     caption: "A small record of weather moving through the room.",
     createdAt: Date.now() - 172800_000 },
 ];
-
-const seedSubmissions: Submission[] = art.slice(0, 6).map((image, i) => ({
-  id: `seed-${i}`, artistName: artistNames[i % artistNames.length],
-  artistAvatar: portraits[i % portraits.length], image, strokes: null,
-  prompt: BATTLE_PROMPT, battleId: BATTLE_ID, createdAt: Date.now() - i * 60_000, votes: 0,
-}));
 
 const BRUSH_COLORS = ["#2b211a", "#c2571f", "#7a8b5a", "#3b5b7a", "#8a5a7a", "#fffdf8"];
 const BRUSH_SIZES = [3, 8, 18, 36];
@@ -776,11 +771,18 @@ export default function App() {
 
   const [user, setUser] = usePersisted<User | null>("cg.user", null);
   const [posts, setPosts] = usePersisted<Post[]>("cg.posts", seedPosts);
-  const [submissions, setSubmissions] = usePersisted<Submission[]>("cg.submissions", seedSubmissions);
+  const [submissions, setSubmissions] = usePersisted<Submission[]>("cg.submissions", []);
   const [inquiries, setInquiries] = usePersisted<Inquiry[]>("cg.inquiries", []);
   const [savedIds, setSavedIds] = usePersisted<string[]>("cg.saved", []);
 
-  /* shared realtime channel — lives at App level so it stays open across navigation */
+  /* load submissions from Supabase on first render */
+  useEffect(() => {
+    loadSubmissions(BATTLE_ID).then((rows) => {
+      if (rows.length > 0) setSubmissions(rows);
+    });
+  }, []);
+
+  /* shared realtime channel at App level */
   const [lastMsg, setLastMsg] = useState<RoomMessage | null>(null);
   const [guestId] = useState(() => `app-${Math.random().toString(36).slice(2, 8)}`);
   const userId = user?.email ?? guestId;
@@ -794,14 +796,12 @@ export default function App() {
   const { send, present, connected } = useRealtimeRoom("047", presence, (m) => setLastMsg(m));
   const realtime: Realtime = { send, present, connected, lastMsg, userId };
 
-  /* apply incoming submissions + votes to local state */
+  /* merge realtime submissions + votes into local state */
   useEffect(() => {
     if (!lastMsg) return;
     if (lastMsg.type === "submission") {
       setSubmissions((prev) =>
-        prev.some((s) => s.id === lastMsg.submission.id)
-          ? prev
-          : [...prev, lastMsg.submission as Submission]
+        prev.some((s) => s.id === lastMsg.submission.id) ? prev : [...prev, lastMsg.submission as Submission]
       );
     } else if (lastMsg.type === "vote") {
       setSubmissions((prev) =>
@@ -814,11 +814,16 @@ export default function App() {
     setSavedIds((v) => (v.includes(id) ? v.filter((x) => x !== id) : [...v, id]));
   const addInquiry = (i: Inquiry) => setInquiries((v) => [i, ...v]);
   const addPost = (p: Post) => setPosts((v) => [p, ...v]);
-  const addSubmission = (s: Submission) => setSubmissions((v) => [...v, s]);
+
+  const addSubmission = (s: Submission) => {
+    setSubmissions((v) => [...v, s]);
+    saveSubmission(s);
+  };
 
   const castVote = (id: string) => {
     setSubmissions((v) => v.map((s) => (s.id === id ? { ...s, votes: s.votes + 1 } : s)));
     send({ type: "vote", submissionId: id, userId });
+    incrementVote(id);
   };
 
   void inquiries;
