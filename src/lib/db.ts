@@ -285,3 +285,113 @@ export async function loadInquiriesForArtist(artistName: string): Promise<Inquir
     createdAt: new Date(row.created_at).getTime(),
   }));
 }
+
+/* =========================================================
+   ARTWORKS (The Wall)
+========================================================= */
+
+export type Artwork = {
+  id: string;
+  artistId: string | null;
+  artistName: string;
+  title: string;
+  image: string;
+  medium: string;
+  dimensions: string;
+  year: number;
+  price: number;
+  available: boolean;
+  createdAt: number;
+};
+
+type ArtworkRow = {
+  id: string;
+  artist_id: string | null;
+  artist_name: string;
+  title: string;
+  image_url: string;
+  medium: string;
+  dimensions: string | null;
+  year: number | null;
+  price: number;
+  available: boolean;
+  created_at: string;
+};
+
+export async function loadArtworks(): Promise<Artwork[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("artworks")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error || !data) {
+    console.error("loadArtworks:", error);
+    return [];
+  }
+  return data.map(rowToArtwork);
+}
+
+export async function saveArtwork(
+  art: Omit<Artwork, "id" | "artistId" | "createdAt">,
+  imageDataUrl: string
+): Promise<Artwork | null> {
+  if (!supabase) return null;
+
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (!userId) {
+    console.warn("saveArtwork: not signed in");
+    return null;
+  }
+
+  const id = crypto.randomUUID();
+  const blob = await (await fetch(imageDataUrl)).blob();
+  const path = `${id}.png`;
+  const { error: upErr } = await supabase.storage
+    .from("wall-art")
+    .upload(path, blob, { contentType: "image/png", upsert: false });
+  if (upErr) {
+    console.error("saveArtwork upload:", upErr);
+    return null;
+  }
+  const imageUrl = supabase.storage.from("wall-art").getPublicUrl(path).data.publicUrl;
+
+  const { data, error } = await supabase
+    .from("artworks")
+    .insert({
+      id,
+      artist_id: userId,
+      artist_name: art.artistName,
+      title: art.title,
+      image_url: imageUrl,
+      medium: art.medium,
+      dimensions: art.dimensions,
+      year: art.year,
+      price: art.price,
+      available: art.available,
+    })
+    .select()
+    .single();
+
+  if (error || !data) {
+    console.error("saveArtwork insert:", error);
+    return null;
+  }
+  return rowToArtwork(data);
+}
+
+function rowToArtwork(row: ArtworkRow): Artwork {
+  return {
+    id: row.id,
+    artistId: row.artist_id,
+    artistName: row.artist_name,
+    title: row.title,
+    image: row.image_url,
+    medium: row.medium,
+    dimensions: row.dimensions ?? "",
+    year: row.year ?? new Date().getFullYear(),
+    price: row.price,
+    available: row.available,
+    createdAt: new Date(row.created_at).getTime(),
+  };
+}

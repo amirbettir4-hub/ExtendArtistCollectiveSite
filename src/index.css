@@ -887,6 +887,17 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
   color: var(--ink);
   outline: none;
 }
+.composer-form input[type="text"],
+.composer-form input[type="number"] {
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  background: transparent;
+  font-family: var(--serif);
+  font-size: 1.1rem;
+  outline: none;
+}
+.composer-form input:focus { border-color: var(--terracotta); }
 .composer-form textarea { padding: var(--space-3); resize: vertical; font-family: var(--serif); font-size: 1.25rem; line-height: 1.5; }
 .composer-form textarea:focus, .composer-form select:focus { border-color: var(--terracotta); }
 .composer-form label + label, .composer-form fieldset { margin-top: var(--space-5); }

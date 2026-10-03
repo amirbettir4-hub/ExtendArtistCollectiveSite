@@ -14,6 +14,7 @@ import {
   loadSubmissions, saveSubmission, castVote as castVoteDB,
   loadPosts, savePost,
   saveInquiry, loadInquiriesForArtist,
+  loadArtworks, saveArtwork, type Artwork,
 } from "./lib/db";
 import { signInWithMagicLink, signOut as authSignOut, onAuthChange } from "./lib/auth";
 
@@ -21,7 +22,7 @@ console.log("SUPABASE CHECK →", import.meta.env.VITE_SUPABASE_URL);
 
 /* ============ TYPES ============ */
 type Section = "wall" | "studio" | "arena" | "auth";
-type ArenaScreen = "lobby" | "prompt" | "canvas" | "watch" | "voting" | "results";
+type ArenaScreen = "lobby" | "canvas" | "watch" | "voting" | "results";
 type StudioScreen = "feed" | "composer" | "room";
 type WallScreen = "grid" | "detail" | "artists";
 type AuthScreen = "signin" | "signup";
@@ -30,10 +31,7 @@ type IconName =
   | "arrow" | "bookmark" | "brush" | "chevron" | "circle"
   | "eraser" | "image" | "play" | "plus" | "redo" | "upload"
   | "menu" | "close" | "trash";
-type Work = {
-  id: number; image: string; title: string; artist: string;
-  price: number; medium: string; dimensions: string; year: number; available: boolean;
-};
+type Work = Artwork;
 export type Realtime = {
   send: (msg: RoomMessage) => void;
   present: PresenceUser[];
@@ -70,17 +68,6 @@ const portraits = [
   "https://images.unsplash.com/photo-1626555019243-638888e7dc3a?auto=format&fit=crop&w=320&q=80",
 ];
 const artistNames = ["Theo K.", "Mara Vale", "June Ori", "Sam Dune", "Inez L.", "K. Moss"];
-
-const artworks: Work[] = art.map((image, i) => ({
-  id: i, image,
-  title: ["Salt marsh study", "North room", "Before the city", "Blue hour no. 4",
-    "Weather drawing", "Notes on leaving", "A softer boundary", "Interval"][i],
-  artist: artistNames[i % artistNames.length],
-  price: [420, 880, 1250, 600, 340, 1900, 720, 510][i],
-  medium: ["Oil on linen", "Graphite", "Mixed media", "Acrylic",
-    "Oil & graphite", "Digital", "Oil on canvas", "Charcoal"][i],
-  dimensions: "60 × 80 cm", year: 2025, available: i % 4 !== 0,
-}));
 
 const seedPosts: Post[] = [
   { id: "p1", artist: "Mara Vale", handle: "@maravale", time: "Today, 10:42",
@@ -220,14 +207,27 @@ function Subnav<T extends string>({ items, active, setActive }: {
 }
 
 /* ============ WALL ============ */
-function WallGrid({ navigate }: { navigate: (s: Section, screen: string, param?: string | number) => void }) {
+function WallGrid({ navigate, artworks, loading }: {
+  navigate: (s: Section, screen: string, param?: string | number) => void;
+  artworks: Work[];
+  loading: boolean;
+}) {
   const [medium, setMedium] = useState("All");
   const [availableOnly, setAvailableOnly] = useState(false);
-  const [priceMax, setPriceMax] = useState(2000);
-  const mediums = ["All", "Oil on linen", "Graphite", "Mixed media", "Acrylic", "Oil & graphite", "Digital", "Charcoal"];
+  const [priceMax, setPriceMax] = useState(5000);
+
+  const mediums = ["All", ...Array.from(new Set(artworks.map((w) => w.medium)))];
+
   const filtered = artworks.filter((w) =>
-    (medium === "All" || w.medium === medium) && (!availableOnly || w.available) && w.price <= priceMax
+    (medium === "All" || w.medium === medium) &&
+    (!availableOnly || w.available) &&
+    w.price <= priceMax
   );
+
+  if (loading) {
+    return <main className="page wall"><StateBlock kind="loading" message="Loading the Wall…" /></main>;
+  }
+
   return (
     <main className="page wall">
       <div className="wall__intro">
@@ -235,6 +235,7 @@ function WallGrid({ navigate }: { navigate: (s: Section, screen: string, param?:
         <h1>Works from the<br /><em>collective.</em></h1>
         <p>Strict grid. No algorithm. Every work same size.<br />Available works marked with a dot.</p>
       </div>
+
       <div className="wall-filters">
         <div className="filter-chips">
           {mediums.map((m) => (
@@ -248,20 +249,30 @@ function WallGrid({ navigate }: { navigate: (s: Section, screen: string, param?:
           </label>
           <label className="filter-price">
             <span>Max €{priceMax}</span>
-            <input type="range" min={200} max={2000} step={100} value={priceMax} onChange={(e) => setPriceMax(Number(e.target.value))} />
+            <input type="range" min={100} max={5000} step={100} value={priceMax} onChange={(e) => setPriceMax(Number(e.target.value))} />
           </label>
           <span className="filter-count">{filtered.length} works</span>
         </div>
       </div>
-      {filtered.length === 0 ? (
+
+      {artworks.length === 0 ? (
+        <StateBlock
+          kind="empty"
+          message="No works on the Wall yet. Be the first to list one."
+          action={<Button onClick={() => navigate("studio", "composer")}>List a work <Icon name="arrow" /></Button>}
+        />
+      ) : filtered.length === 0 ? (
         <StateBlock kind="empty" message="No works match those filters."
-          action={<Button variant="outline" onClick={() => { setMedium("All"); setAvailableOnly(false); setPriceMax(2000); }}>Clear filters</Button>} />
+          action={<Button variant="outline" onClick={() => { setMedium("All"); setAvailableOnly(false); setPriceMax(5000); }}>Clear filters</Button>} />
       ) : (
         <div className="wall-grid">
           {filtered.map((work) => (
             <button key={work.id} className="artwork-cell" onClick={() => navigate("wall", "detail", work.id)}>
               <div className="artwork-cell__mat"><img src={work.image} alt={work.title} /></div>
-              <div className="artwork-cell__meta"><strong>{work.title}</strong><span>{work.artist}</span></div>
+              <div className="artwork-cell__meta">
+                <strong>{work.title}</strong>
+                <span>{work.artistName}</span>
+              </div>
               {work.available && <i className="availability-dot" />}
             </button>
           ))}
@@ -283,7 +294,14 @@ function InquiryModal({ work, onClose }: { work: Work; onClose: () => void }) {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const ok = await saveInquiry(work.id, work.title, work.artist, name, email, message);
+    const ok = await saveInquiry(
+      parseInt(work.id.slice(0, 8), 16),
+      work.title,
+      work.artistName,
+      name,
+      email,
+      message
+    );
     setBusy(false);
     if (!ok) {
       setError("Could not send. Try again.");
@@ -299,7 +317,7 @@ function InquiryModal({ work, onClose }: { work: Work; onClose: () => void }) {
           <div className="modal__success">
             <span className="kicker">Sent</span>
             <h2>Inquiry received.</h2>
-            <p>{work.artist} will reply to <strong>{email}</strong> within 48 hours.</p>
+            <p>{work.artistName} will reply to <strong>{email}</strong> within 48 hours.</p>
             <Button variant="outline" onClick={onClose}>Close</Button>
           </div>
         ) : (
@@ -327,24 +345,36 @@ function InquiryModal({ work, onClose }: { work: Work; onClose: () => void }) {
   );
 }
 
-function ArtworkDetail({ id, navigate }: {
-  id: number;
+function ArtworkDetail({ id, navigate, artworks }: {
+  id: string;
   navigate: (s: Section, screen: string, param?: string | number) => void;
+  artworks: Work[];
 }) {
   const [showInquiry, setShowInquiry] = useState(false);
-  const work = artworks[id];
-  if (!work) return <main className="page"><StateBlock kind="error" message="Work not found." action={<Button variant="outline" onClick={() => navigate("wall", "grid")}>Back to the Wall</Button>} /></main>;
+  const work = artworks.find((w) => w.id === id);
+
+  if (!work) {
+    return (
+      <main className="page">
+        <StateBlock kind="error" message="Work not found."
+          action={<Button variant="outline" onClick={() => navigate("wall", "grid")}>Back to the Wall</Button>} />
+      </main>
+    );
+  }
+
   return (
     <main className="page artwork-detail">
-      <button className="back-link" onClick={() => navigate("wall", "grid")}><Icon name="arrow" /> Back to the Wall</button>
+      <button className="back-link" onClick={() => navigate("wall", "grid")}>
+        <Icon name="arrow" /> Back to the Wall
+      </button>
       <div className="artwork-detail__layout">
         <div className="artwork-detail__image"><img src={work.image} alt={work.title} /></div>
         <div className="artwork-detail__info">
-          <span className="kicker">{work.artist}</span>
+          <span className="kicker">{work.artistName}</span>
           <h1>{work.title}</h1>
           <dl>
             <div><dt>Medium</dt><dd>{work.medium}</dd></div>
-            <div><dt>Dimensions</dt><dd>{work.dimensions}</dd></div>
+            <div><dt>Dimensions</dt><dd>{work.dimensions || "—"}</dd></div>
             <div><dt>Year</dt><dd>{work.year}</dd></div>
             <div><dt>Price</dt><dd>€{work.price.toLocaleString()}</dd></div>
             <div><dt>Status</dt><dd>{work.available ? "Available" : "Sold"}</dd></div>
@@ -352,7 +382,9 @@ function ArtworkDetail({ id, navigate }: {
           <Button onClick={() => setShowInquiry(true)} disabled={!work.available}>
             {work.available ? "Inquire" : "Sold"} <Icon name="arrow" />
           </Button>
-          <Button variant="outline" onClick={() => navigate("studio", "room")}>View artist's room</Button>
+          <Button variant="outline" onClick={() => navigate("studio", "room")}>
+            View artist's room
+          </Button>
         </div>
       </div>
       {showInquiry && <InquiryModal work={work} onClose={() => setShowInquiry(false)} />}
@@ -429,7 +461,6 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
 
   const { remote, liveRef } = useRemoteStrokes(realtime.lastMsg, realtime.userId);
 
-  /* host auto-advances countdown → drawing */
   useEffect(() => {
     if (!realtime.isHost) return;
     if (realtime.phase !== "countdown") return;
@@ -437,7 +468,6 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
     realtime.startPhase("drawing", 20 * 60);
   }, [realtime.phase, realtime.secondsLeft, realtime.isHost]);
 
-  /* host auto-advances drawing → voting */
   useEffect(() => {
     if (!realtime.isHost) return;
     if (realtime.phase !== "drawing") return;
@@ -473,7 +503,6 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
     navigate("arena", "voting");
   };
 
-  /* pre-battle waiting room */
   if (realtime.phase === "lobby") {
     return (
       <main className="canvas-screen">
@@ -501,7 +530,6 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
     );
   }
 
-  /* 3-2-1 countdown */
   if (realtime.phase === "countdown") {
     return (
       <main className="prompt-screen">
@@ -518,7 +546,6 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
     );
   }
 
-  /* voting phase without submitting yet */
   if (realtime.phase === "voting" && !submitted) {
     return (
       <main className="page">
@@ -788,62 +815,114 @@ function StudioFeed({ posts, user, savedIds, toggleSaved, loading }: {
   );
 }
 
-function Composer({ onPost, user, navigate }: {
-  onPost: (p: Post) => void; user: User | null;
+function Composer({ user, navigate, onListed }: {
+  user: User | null;
   navigate: (s: Section, screen: string, param?: string | number) => void;
+  onListed: (art: Artwork) => void;
 }) {
-  const [mode, setMode] = useState<"WIP" | "Finished">("WIP");
-  const [caption, setCaption] = useState("");
+  const [title, setTitle] = useState("");
   const [medium, setMedium] = useState("");
+  const [dimensions, setDimensions] = useState("");
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [price, setPrice] = useState("");
+  const [image, setImage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   if (!user) {
-    return <main className="page"><StateBlock kind="empty" message="Sign in to share your work."
-      action={<Button variant="outline" onClick={() => navigate("auth", "signin")}>Sign in</Button>} /></main>;
+    return (
+      <main className="page">
+        <StateBlock kind="empty" message="Sign in to list a work."
+          action={<Button variant="outline" onClick={() => navigate("auth", "signin")}>Sign in</Button>} />
+      </main>
+    );
   }
-  const handlePost = () => {
-    if (!caption.trim() || !medium) return;
-    onPost({
-      id: uid(), artist: user.name || user.email.split("@")[0],
-      handle: "@" + user.email.split("@")[0], avatar: portraits[0],
-      image: art[Math.floor(Math.random() * art.length)], status: mode, medium,
-      caption: caption.trim(), time: "Just now", createdAt: Date.now(),
-    });
-    setCaption("");
-    navigate("studio", "feed");
+
+  const pickImage = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => setImage(reader.result as string);
+      reader.readAsDataURL(file);
+    };
+    input.click();
   };
+
+  const handleList = async () => {
+    if (!title.trim() || !medium.trim() || !price || !image) {
+      setError("Fill in title, medium, price, and pick an image.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const result = await saveArtwork(
+      {
+        artistName: user.name || user.email.split("@")[0],
+        title: title.trim(),
+        image: "",
+        medium: medium.trim(),
+        dimensions: dimensions.trim(),
+        year,
+        price: parseInt(price, 10),
+        available: true,
+      },
+      image
+    );
+    setBusy(false);
+    if (!result) {
+      setError("Could not list the work. Try again.");
+      return;
+    }
+    onListed(result);
+    navigate("wall", "grid");
+  };
+
   return (
     <main className="composer page">
-      <div className="composer__heading"><span className="kicker">New studio post</span><h1>Share what's<br /><em>on your table.</em></h1></div>
+      <div className="composer__heading">
+        <span className="kicker">List a new work</span>
+        <h1>Put something<br /><em>on the Wall.</em></h1>
+      </div>
       <div className="composer__layout">
-        <section className="upload-zone">
-          <Icon name="image" size={32} />
-          <h2>Add your work</h2>
-          <p>For this demo, an image is chosen automatically.</p>
-          <div>
-            <Button><Icon name="upload" /> Upload image</Button>
-            <Button variant="outline" onClick={() => navigate("arena", "canvas")}><Icon name="brush" /> Draw in Arena</Button>
-          </div>
+        <section className="upload-zone" onClick={pickImage} style={{ cursor: "pointer" }}>
+          {image ? (
+            <img src={image} alt="Preview" style={{ maxHeight: "24rem", objectFit: "contain" }} />
+          ) : (
+            <>
+              <Icon name="image" size={32} />
+              <h2>Pick an image</h2>
+              <p>Click to upload. JPG, PNG or WEBP.</p>
+            </>
+          )}
         </section>
         <section className="composer-form">
-          <label>Caption<textarea rows={5} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="Tell us what you're working through…" /></label>
-          <label>Medium
-            <div className="select-wrap">
-              <select value={medium} onChange={(e) => setMedium(e.target.value)}>
-                <option value="" disabled>Select a medium</option>
-                <option>Oil painting</option><option>Drawing</option><option>Digital</option><option>Mixed media</option>
-              </select>
-              <Icon name="chevron" />
-            </div>
+          <label>Title
+            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Salt marsh study" />
           </label>
-          <fieldset>
-            <legend>State of work</legend>
-            <div className="segmented">
-              <button className={mode === "WIP" ? "active" : ""} onClick={() => setMode("WIP")}><span>WIP</span><small>Still in process</small></button>
-              <button className={mode === "Finished" ? "active" : ""} onClick={() => setMode("Finished")}><span>Finished</span><small>Ready to share</small></button>
-            </div>
-          </fieldset>
+          <label>Medium
+            <input value={medium} onChange={(e) => setMedium(e.target.value)} placeholder="e.g. Oil on linen" />
+          </label>
+          <label>Dimensions
+            <input value={dimensions} onChange={(e) => setDimensions(e.target.value)} placeholder="e.g. 60 × 80 cm" />
+          </label>
+          <label>Year
+            <input type="number" value={year} onChange={(e) => setYear(parseInt(e.target.value, 10) || new Date().getFullYear())} />
+          </label>
+          <label>Price (€)
+            <input type="number" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="e.g. 850" />
+          </label>
+
+          {error && <p className="auth__error">{error}</p>}
+
           <div className="composer-form__footer">
-            <span>Posts appear chronologically.</span>
-            <Button onClick={handlePost} disabled={!caption.trim() || !medium}>Post to studio <Icon name="arrow" /></Button>
+            <span>Will appear on The Wall immediately.</span>
+            <Button onClick={handleList} disabled={busy}>
+              {busy ? "Listing…" : "List work"} <Icon name="arrow" />
+            </Button>
           </div>
         </section>
       </div>
@@ -1042,6 +1121,8 @@ export default function App() {
   const [posts, setPosts] = useState<Post[]>(seedPosts);
   const [postsLoading, setPostsLoading] = useState(true);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [artworks, setArtworks] = useState<Artwork[]>([]);
+  const [artworksLoading, setArtworksLoading] = useState(true);
   const [savedIds, setSavedIds] = useState<string[]>([]);
 
   useEffect(() => {
@@ -1061,6 +1142,14 @@ export default function App() {
     });
   }, []);
 
+  useEffect(() => {
+    setArtworksLoading(true);
+    loadArtworks().then((rows) => {
+      setArtworks(rows);
+      setArtworksLoading(false);
+    });
+  }, []);
+
   const [lastMsg, setLastMsg] = useState<RoomMessage | null>(null);
   const [guestId] = useState(() => `app-${Math.random().toString(36).slice(2, 8)}`);
   const userId = user?.email ?? guestId;
@@ -1075,7 +1164,6 @@ export default function App() {
   const { send, present, connected } = useRealtimeRoom("047", presence, (m) => setLastMsg(m));
   const { phase, secondsLeft, prompt, startPhase } = useSyncedPhase(lastMsg, send, userId);
 
-  /* host = earliest joined artist */
   const artists = present.filter((p) => p.role === "artist");
   const host = artists.length > 0 ? artists.reduce((a, b) => (a.joinedAt < b.joinedAt ? a : b)) : null;
   const isHost = host?.userId === userId;
@@ -1100,15 +1188,6 @@ export default function App() {
 
   const toggleSaved = (id: string) =>
     setSavedIds((v) => (v.includes(id) ? v.filter((x) => x !== id) : [...v, id]));
-
-  const addPost = async (p: Post) => {
-    setPosts((v) => [p, ...v]);
-    const ok = await savePost(p);
-    if (!ok) {
-      alert("Could not save post. Please sign in first.");
-      setPosts((v) => v.filter((x) => x.id !== p.id));
-    }
-  };
 
   const addSubmission = async (s: Submission) => {
     setSubmissions((v) => [...v, s]);
@@ -1155,7 +1234,7 @@ export default function App() {
         <Subnav
           items={[
             { id: "feed" as StudioScreen, label: "Feed" },
-            { id: "composer" as StudioScreen, label: "Composer" },
+            { id: "composer" as StudioScreen, label: "List a work" },
             { id: "room" as StudioScreen, label: "Artist room" },
           ]}
           active={screen as StudioScreen}
@@ -1176,9 +1255,11 @@ export default function App() {
         />
       )}
 
-      {section === "wall" && wallScreen === "grid" && <WallGrid navigate={navigate} />}
+      {section === "wall" && wallScreen === "grid" && (
+        <WallGrid navigate={navigate} artworks={artworks} loading={artworksLoading} />
+      )}
       {section === "wall" && wallScreen === "detail" && (
-        <ArtworkDetail id={parseInt(param || "0", 10)} navigate={navigate} />
+        <ArtworkDetail id={param} navigate={navigate} artworks={artworks} />
       )}
       {section === "wall" && wallScreen === "artists" && <ArtistsDirectory navigate={navigate} />}
 
@@ -1204,7 +1285,11 @@ export default function App() {
         />
       )}
       {section === "studio" && screen === "composer" && (
-        <Composer onPost={addPost} user={user} navigate={navigate} />
+        <Composer
+          user={user}
+          navigate={navigate}
+          onListed={(a) => setArtworks((prev) => [a, ...prev])}
+        />
       )}
       {section === "studio" && screen === "room" && <ArtistRoom user={user} />}
 
