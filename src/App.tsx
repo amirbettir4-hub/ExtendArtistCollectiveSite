@@ -2,14 +2,17 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { TimelapseReplay } from "./components/TimelapseReplay";
 import { LiveCanvas, type LiveCanvasHandle } from "./components/LiveCanvas";
 import {
-  usePersisted, uid,
+  uid,
   type Submission, type Post, type Inquiry, type User,
 } from "./store";
 import {
   useRealtimeRoom, useRemoteStrokes,
   type PresenceUser, type RoomMessage,
 } from "./lib/realtime";
-import { loadSubmissions, saveSubmission, castVote as castVoteDB } from "./lib/db";
+import {
+  loadSubmissions, saveSubmission, castVote as castVoteDB,
+  loadPosts, savePost,
+} from "./lib/db";
 import { signInWithMagicLink, signOut as authSignOut, onAuthChange } from "./lib/auth";
 
 console.log("SUPABASE CHECK →", import.meta.env.VITE_SUPABASE_URL);
@@ -635,10 +638,25 @@ function Results({ navigate, submissions }: {
 }
 
 /* ============ STUDIO ============ */
-function StudioFeed({ posts, user, savedIds, toggleSaved }: {
-  posts: Post[]; user: User | null; savedIds: string[]; toggleSaved: (id: string) => void;
+function StudioFeed({ posts, user, savedIds, toggleSaved, loading }: {
+  posts: Post[]; user: User | null; savedIds: string[]; toggleSaved: (id: string) => void; loading: boolean;
 }) {
   const sorted = [...posts].sort((a, b) => b.createdAt - a.createdAt);
+  if (loading) return <main className="feed page"><StateBlock kind="loading" message="Loading posts…" /></main>;
+  if (sorted.length === 0) {
+    return (
+      <main className="feed page">
+        <div className="feed__intro">
+          <span className="kicker">Studio journal</span>
+          <h1>What we're<br /><em>making now.</em></h1>
+          <p>Shared in order, as it happens.<br />No rankings. No recommendations.</p>
+        </div>
+        <div className="feed-list">
+          <StateBlock kind="empty" message="No posts yet. Be the first to share." />
+        </div>
+      </main>
+    );
+  }
   return (
     <main className="feed page">
       <div className="feed__intro">
@@ -687,6 +705,7 @@ function Composer({ onPost, user, navigate }: {
       caption: caption.trim(), time: "Just now", createdAt: Date.now(),
     });
     setCaption("");
+    navigate("studio", "feed");
   };
   return (
     <main className="composer page">
@@ -807,13 +826,7 @@ function AuthPage({ mode, navigate, onSignedIn }: {
             <label>Name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Optional" /></label>
           )}
           <label>Email
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              autoFocus
-            />
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
           </label>
           {error && <p className="auth__error">{error}</p>}
           <Button type="submit" disabled={busy || !email}>
@@ -834,10 +847,11 @@ export default function App() {
   const { section, screen, param } = route;
 
   const [user, setUser] = useState<User | null>(null);
-  const [posts, setPosts] = usePersisted<Post[]>("cg.posts", seedPosts);
-  const [submissions, setSubmissions] = usePersisted<Submission[]>("cg.submissions", []);
-  const [inquiries, setInquiries] = usePersisted<Inquiry[]>("cg.inquiries", []);
-  const [savedIds, setSavedIds] = usePersisted<string[]>("cg.saved", []);
+  const [posts, setPosts] = useState<Post[]>(seedPosts);
+  const [postsLoading, setPostsLoading] = useState(true);
+  const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [inquiries, setInquiries] = useState<Inquiry[]>([]);
+  const [savedIds, setSavedIds] = useState<string[]>([]);
 
   /* subscribe to real Supabase auth */
   useEffect(() => {
@@ -845,10 +859,17 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  /* load submissions from Supabase on first render */
+  /* load submissions from DB */
   useEffect(() => {
-    loadSubmissions(BATTLE_ID).then((rows) => {
-      if (rows.length > 0) setSubmissions(rows);
+    loadSubmissions(BATTLE_ID).then(setSubmissions);
+  }, []);
+
+  /* load studio posts from DB */
+  useEffect(() => {
+    setPostsLoading(true);
+    loadPosts().then((rows) => {
+      if (rows.length > 0) setPosts(rows);
+      setPostsLoading(false);
     });
   }, []);
 
@@ -878,12 +899,20 @@ export default function App() {
         prev.map((s) => (s.id === lastMsg.submissionId ? { ...s, votes: s.votes + 1 } : s))
       );
     }
-  }, [lastMsg, setSubmissions]);
+  }, [lastMsg]);
 
   const toggleSaved = (id: string) =>
     setSavedIds((v) => (v.includes(id) ? v.filter((x) => x !== id) : [...v, id]));
   const addInquiry = (i: Inquiry) => setInquiries((v) => [i, ...v]);
-  const addPost = (p: Post) => setPosts((v) => [p, ...v]);
+
+  const addPost = async (p: Post) => {
+    setPosts((v) => [p, ...v]);
+    const ok = await savePost(p);
+    if (!ok) {
+      alert("Could not save post. Please sign in first.");
+      setPosts((v) => v.filter((x) => x.id !== p.id));
+    }
+  };
 
   const addSubmission = async (s: Submission) => {
     setSubmissions((v) => [...v, s]);
@@ -974,7 +1003,13 @@ export default function App() {
       )}
 
       {section === "studio" && screen === "feed" && (
-        <StudioFeed posts={posts} user={user} savedIds={savedIds} toggleSaved={toggleSaved} />
+        <StudioFeed
+          posts={posts}
+          user={user}
+          savedIds={savedIds}
+          toggleSaved={toggleSaved}
+          loading={postsLoading}
+        />
       )}
       {section === "studio" && screen === "composer" && (
         <Composer onPost={addPost} user={user} navigate={navigate} />
