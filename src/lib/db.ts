@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import type { Stroke, Submission, Post } from "../store";
+import type { Stroke, Submission, Post, Inquiry } from "../store";
 
 /* =========================================================
    SUBMISSIONS
@@ -213,4 +213,75 @@ function formatTime(iso: string): string {
   const day = Math.floor(hr / 24);
   if (day < 7) return `${day}d ago`;
   return d.toLocaleDateString();
+}
+
+/* =========================================================
+   INQUIRIES
+========================================================= */
+
+type InquiryRow = {
+  id: string;
+  artwork_id: number;
+  work_title: string;
+  artist_name: string;
+  buyer_id: string | null;
+  buyer_name: string;
+  buyer_email: string;
+  message: string;
+  read: boolean;
+  created_at: string;
+};
+
+export async function saveInquiry(
+  workId: number,
+  workTitle: string,
+  artistName: string,
+  buyerName: string,
+  buyerEmail: string,
+  message: string
+): Promise<boolean> {
+  if (!supabase) return false;
+
+  const { data: userData } = await supabase.auth.getUser();
+  const buyerId = userData.user?.id ?? null;
+
+  const { error } = await supabase.from("inquiries").insert({
+    artwork_id: workId,
+    work_title: workTitle,
+    artist_name: artistName,
+    buyer_id: buyerId,
+    buyer_name: buyerName,
+    buyer_email: buyerEmail,
+    message,
+  });
+
+  if (error) {
+    console.error("saveInquiry:", error);
+    return false;
+  }
+  return true;
+}
+
+export async function loadInquiriesForArtist(artistName: string): Promise<Inquiry[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("inquiries")
+    .select("*")
+    .eq("artist_name", artistName)
+    .order("created_at", { ascending: false });
+  if (error || !data) {
+    console.error("loadInquiriesForArtist:", error);
+    return [];
+  }
+  return data.map((row: InquiryRow) => ({
+    id: row.id,
+    workId: row.artwork_id,
+    workTitle: row.work_title,
+    artistName: row.artist_name,
+    buyerName: row.buyer_name,
+    buyerEmail: row.buyer_email,
+    message: row.message,
+    read: row.read,
+    createdAt: new Date(row.created_at).getTime(),
+  }));
 }

@@ -59,9 +59,13 @@ export type Inquiry = {
   id: string;
   workId: number;
   workTitle: string;
-  name: string;
-  email: string;
+  artistName?: string;
+  buyerName?: string;
+  buyerEmail?: string;
+  name?: string;
+  email?: string;
   message: string;
+  read?: boolean;
   createdAt: number;
 };
 
