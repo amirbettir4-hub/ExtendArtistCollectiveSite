@@ -1018,37 +1018,12 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
 .room-work__delete:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Artist room — about tab */
-.room-about {
-  margin-top: var(--space-5);
-}
-.room-about p {
-  font-family: var(--serif);
-  font-size: 1.15rem;
-  line-height: 1.55;
-  max-width: 44rem;
-}
-.room-about dl {
-  margin-top: var(--space-5);
-  border-top: 1px solid var(--line);
-  max-width: 30rem;
-}
-.room-about dl div {
-  display: flex;
-  justify-content: space-between;
-  padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--line);
-}
-.room-about dt {
-  color: var(--muted);
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.room-about dd {
-  margin: 0;
-  font-family: var(--serif);
-  font-size: 1rem;
-}
+.room-about { margin-top: var(--space-5); }
+.room-about p { font-family: var(--serif); font-size: 1.15rem; line-height: 1.55; max-width: 44rem; }
+.room-about dl { margin-top: var(--space-5); border-top: 1px solid var(--line); max-width: 30rem; }
+.room-about dl div { display: flex; justify-content: space-between; padding: var(--space-3) 0; border-bottom: 1px solid var(--line); }
+.room-about dt { color: var(--muted); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.room-about dd { margin: 0; font-family: var(--serif); font-size: 1rem; }
 .room-about a { color: var(--terracotta); }
 
 /* =========================================================
@@ -1103,16 +1078,8 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
 /* =========================================================
    ARTIST INBOX
 ========================================================= */
-.inbox {
-  display: grid;
-  gap: var(--space-4);
-  margin-top: var(--space-5);
-}
-.inbox__item {
-  padding: var(--space-5);
-  border: 1px solid var(--line);
-  background: var(--white);
-}
+.inbox { display: grid; gap: var(--space-4); margin-top: var(--space-5); }
+.inbox__item { padding: var(--space-5); border: 1px solid var(--line); background: var(--white); }
 .inbox__head {
   display: flex;
   justify-content: space-between;
@@ -1121,8 +1088,7 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
   border-bottom: 1px solid var(--line);
   margin-bottom: var(--space-4);
 }
-.inbox__head strong,
-.inbox__head span { display: block; }
+.inbox__head strong, .inbox__head span { display: block; }
 .inbox__head strong { font-family: var(--serif); font-size: 1.15rem; font-weight: 400; }
 .inbox__head span { color: var(--muted); font-size: 0.7rem; margin-top: 0.15rem; }
 .inbox__date { color: var(--muted); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; }
@@ -1135,16 +1101,8 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
 /* =========================================================
    ADMIN
 ========================================================= */
-.admin-list {
-  display: grid;
-  gap: var(--space-4);
-  margin-top: var(--space-5);
-}
-.admin-card {
-  padding: var(--space-5);
-  border: 1px solid var(--line);
-  background: var(--white);
-}
+.admin-list { display: grid; gap: var(--space-4); margin-top: var(--space-5); }
+.admin-card { padding: var(--space-5); border: 1px solid var(--line); background: var(--white); }
 .admin-card__head {
   display: flex;
   align-items: center;
@@ -1154,11 +1112,7 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
   margin-bottom: var(--space-4);
 }
 .admin-card__head img,
-.admin-card__head .artist-card__fallback {
-  width: 3.5rem;
-  height: 3.5rem;
-  font-size: 1.4rem;
-}
+.admin-card__head .artist-card__fallback { width: 3.5rem; height: 3.5rem; font-size: 1.4rem; }
 .admin-card__head strong { display: block; font-family: var(--serif); font-size: 1.15rem; font-weight: 400; }
 .admin-card__head span { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; }
 .admin-card p { margin: 0 0 var(--space-4); font-family: var(--serif); font-size: 1rem; line-height: 1.55; }
@@ -1172,7 +1126,7 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
 }
 
 /* =========================================================
-   THE WALL
+   THE WALL — search + filters
 ========================================================= */
 .wall__intro { max-width: 46rem; margin-bottom: var(--space-7); }
 .wall__intro h1 {
@@ -1184,6 +1138,36 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
   letter-spacing: -0.04em;
 }
 .wall__intro p { margin: 0; color: var(--muted); font-size: 0.88rem; line-height: 1.7; }
+
+.wall-search {
+  position: relative;
+  margin-bottom: var(--space-4);
+}
+.wall-search input {
+  width: 100%;
+  height: 3.5rem;
+  padding: 0 3rem 0 var(--space-4);
+  border: 1px solid var(--line);
+  background: var(--white);
+  font-family: var(--serif);
+  font-size: 1.15rem;
+  outline: none;
+}
+.wall-search input:focus { border-color: var(--terracotta); }
+.wall-search__clear {
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.wall-search__clear:hover { color: var(--terracotta); }
 
 .wall-filters {
   display: flex;
@@ -1207,7 +1191,7 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
 }
 .filter-chips button.active { border-color: var(--terracotta); color: var(--terracotta); }
 .filter-right { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
-.filter-toggle, .filter-price {
+.filter-toggle, .filter-price, .filter-sort {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -1216,6 +1200,21 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
   letter-spacing: 0.06em;
 }
 .filter-price input { width: 8rem; accent-color: var(--terracotta); }
+.filter-sort select {
+  height: 2.25rem;
+  padding: 0 1.75rem 0 0.5rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%232b211a' fill='none' stroke-width='1.2'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+}
+.filter-sort select:focus { border-color: var(--terracotta); outline: none; }
 .filter-count { color: var(--muted); font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; }
 
 .wall-grid {
@@ -1657,9 +1656,11 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
   .process-intro p { margin-top: var(--space-2); }
   .process-grid { grid-template-columns: 1fr; }
 
+  .wall-search input { font-size: 1rem; height: 3rem; }
   .wall-grid { grid-template-columns: repeat(2, 1fr); }
   .wall-filters { flex-direction: column; align-items: stretch; }
   .filter-right { flex-direction: column; align-items: stretch; gap: var(--space-3); }
+  .filter-price input { width: 100%; }
   .artist-directory-grid { grid-template-columns: 1fr; }
   .skeleton-grid { grid-template-columns: repeat(2, 1fr); }
 

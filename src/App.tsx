@@ -27,6 +27,7 @@ type StudioScreen = "feed" | "post" | "composer" | "apply" | "admin" | "room";
 type WallScreen = "grid" | "detail" | "artists";
 type AuthScreen = "signin" | "signup";
 type Tool = "brush" | "eraser";
+type SortMode = "newest" | "price-asc" | "price-desc" | "title";
 type IconName =
   | "arrow" | "bookmark" | "brush" | "chevron" | "circle"
   | "eraser" | "image" | "play" | "plus" | "redo" | "upload"
@@ -199,14 +200,41 @@ function WallGrid({ navigate, artworks, loading }: {
   const [medium, setMedium] = useState("All");
   const [availableOnly, setAvailableOnly] = useState(false);
   const [priceMax, setPriceMax] = useState(5000);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<SortMode>("newest");
 
   const mediums = ["All", ...Array.from(new Set(artworks.map((w) => w.medium)))];
 
-  const filtered = artworks.filter((w) =>
-    (medium === "All" || w.medium === medium) &&
-    (!availableOnly || w.available) &&
-    w.price <= priceMax
-  );
+  const query = search.trim().toLowerCase();
+
+  const filtered = artworks.filter((w) => {
+    if (medium !== "All" && w.medium !== medium) return false;
+    if (availableOnly && !w.available) return false;
+    if (w.price > priceMax) return false;
+    if (query) {
+      const haystack = `${w.title} ${w.artistName} ${w.medium}`.toLowerCase();
+      if (!haystack.includes(query)) return false;
+    }
+    return true;
+  });
+
+  const sorted = [...filtered].sort((a, b) => {
+    switch (sort) {
+      case "price-asc": return a.price - b.price;
+      case "price-desc": return b.price - a.price;
+      case "title": return a.title.localeCompare(b.title);
+      default: return b.createdAt - a.createdAt;
+    }
+  });
+
+  const hasFilters = medium !== "All" || availableOnly || priceMax < 5000 || query !== "";
+  const clearAll = () => {
+    setMedium("All");
+    setAvailableOnly(false);
+    setPriceMax(5000);
+    setSearch("");
+    setSort("newest");
+  };
 
   if (loading) {
     return <main className="page wall"><StateBlock kind="loading" message="Loading the Wall…" /></main>;
@@ -218,6 +246,21 @@ function WallGrid({ navigate, artworks, loading }: {
         <span className="kicker">The Wall</span>
         <h1>Works from the<br /><em>collective.</em></h1>
         <p>Strict grid. No algorithm. Every work same size.<br />Available works marked with a dot.</p>
+      </div>
+
+      <div className="wall-search">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search title, artist, or medium…"
+          aria-label="Search artworks"
+        />
+        {search && (
+          <button className="wall-search__clear" onClick={() => setSearch("")} aria-label="Clear search">
+            ✕
+          </button>
+        )}
       </div>
 
       <div className="wall-filters">
@@ -235,7 +278,16 @@ function WallGrid({ navigate, artworks, loading }: {
             <span>Max €{priceMax}</span>
             <input type="range" min={100} max={5000} step={100} value={priceMax} onChange={(e) => setPriceMax(Number(e.target.value))} />
           </label>
-          <span className="filter-count">{filtered.length} works</span>
+          <label className="filter-sort">
+            <span>Sort</span>
+            <select value={sort} onChange={(e) => setSort(e.target.value as SortMode)}>
+              <option value="newest">Newest</option>
+              <option value="price-asc">Price ↑</option>
+              <option value="price-desc">Price ↓</option>
+              <option value="title">Title A–Z</option>
+            </select>
+          </label>
+          <span className="filter-count">{sorted.length} work{sorted.length === 1 ? "" : "s"}</span>
         </div>
       </div>
 
@@ -245,12 +297,15 @@ function WallGrid({ navigate, artworks, loading }: {
           message="No works on the Wall yet. Be the first to list one."
           action={<Button onClick={() => navigate("studio", "composer")}>List a work <Icon name="arrow" /></Button>}
         />
-      ) : filtered.length === 0 ? (
-        <StateBlock kind="empty" message="No works match those filters."
-          action={<Button variant="outline" onClick={() => { setMedium("All"); setAvailableOnly(false); setPriceMax(5000); }}>Clear filters</Button>} />
+      ) : sorted.length === 0 ? (
+        <StateBlock
+          kind="empty"
+          message={query ? `No works match "${search}".` : "No works match those filters."}
+          action={hasFilters ? <Button variant="outline" onClick={clearAll}>Clear all filters</Button> : undefined}
+        />
       ) : (
         <div className="wall-grid">
-          {filtered.map((work) => (
+          {sorted.map((work) => (
             <button key={work.id} className="artwork-cell" onClick={() => navigate("wall", "detail", work.id)}>
               <div className="artwork-cell__mat"><img src={work.image} alt={work.title} /></div>
               <div className="artwork-cell__meta">
@@ -1137,7 +1192,6 @@ export default function App() {
   const wallScreen: WallScreen =
     screen === "detail" ? "detail" : screen === "artists" ? "artists" : "grid";
 
-  /* room is now studio/room/<artistId> → screen === "room", param === artistId */
   const isRoom = section === "studio" && screen === "room" && !!param;
   const roomId = isRoom ? param : "";
 
