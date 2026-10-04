@@ -3,7 +3,8 @@ import {
   loadArtists, loadArtistById, loadArtworksByUser,
   saveArtistProfile, loadPendingArtists, setArtistStatus,
   deleteArtwork,
-  type Artist, type Artwork,
+  loadAllBattles, createBattle, deleteBattle,
+  type Artist, type Artwork, type Battle,
 } from "../lib/db";
 import type { User } from "../store";
 
@@ -58,7 +59,7 @@ export function ArtistDirectory({ navigate }: { navigate: Nav }) {
             <button
               key={a.id}
               className="artist-card"
-              onClick={() => navigate("studio", `room/${a.id}`)}
+              onClick={() => navigate("studio", "room", a.id)}
             >
               {a.avatar ? (
                 <img src={a.avatar} alt={a.name} />
@@ -82,10 +83,7 @@ export function ArtistDirectory({ navigate }: { navigate: Nav }) {
 ========================================================= */
 
 export function ArtistRoom({
-  artistId,
-  user,
-  myArtist,
-  navigate,
+  artistId, user, myArtist, navigate,
 }: {
   artistId: string;
   user: User | null;
@@ -98,16 +96,14 @@ export function ArtistRoom({
   const [tab, setTab] = useState<"works" | "about">("works");
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const reload = async (a: Artist) => {
-    const w = await loadArtworksByUser(a.userId);
-    setWorks(w);
-  };
-
   useEffect(() => {
     setLoading(true);
     loadArtistById(artistId).then(async (a) => {
       setArtist(a);
-      if (a) await reload(a);
+      if (a) {
+        const w = await loadArtworksByUser(a.userId);
+        setWorks(w);
+      }
       setLoading(false);
     });
   }, [artistId]);
@@ -137,11 +133,8 @@ export function ArtistRoom({
     setDeletingId(id);
     const ok = await deleteArtwork(id);
     setDeletingId(null);
-    if (ok) {
-      setWorks((prev) => prev.filter((w) => w.id !== id));
-    } else {
-      alert("Could not delete. Try again.");
-    }
+    if (ok) setWorks((prev) => prev.filter((w) => w.id !== id));
+    else alert("Could not delete. Try again.");
   };
 
   return (
@@ -224,12 +217,8 @@ export function ArtistRoom({
         <div className="room-about">
           <p>{artist.bio || "No bio yet."}</p>
           <dl>
-            {artist.location && (
-              <div><dt>Location</dt><dd>{artist.location}</dd></div>
-            )}
-            {artist.medium && (
-              <div><dt>Medium</dt><dd>{artist.medium}</dd></div>
-            )}
+            {artist.location && (<div><dt>Location</dt><dd>{artist.location}</dd></div>)}
+            {artist.medium && (<div><dt>Medium</dt><dd>{artist.medium}</dd></div>)}
             {artist.website && (
               <div>
                 <dt>Website</dt>
@@ -255,13 +244,7 @@ export function ArtistRoom({
    APPLY / EDIT PROFILE
 ========================================================= */
 
-export function ArtistApply({
-  user,
-  navigate,
-}: {
-  user: User | null;
-  navigate: Nav;
-}) {
+export function ArtistApply({ user, navigate }: { user: User | null; navigate: Nav }) {
   const [existing, setExisting] = useState<Artist | null>(null);
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
@@ -305,9 +288,7 @@ export function ArtistApply({
       <main className="page">
         <StateBlock kind="empty" message="Sign in to apply." />
         <div style={{ textAlign: "center", marginTop: "1rem" }}>
-          <button className="button button--outline" onClick={() => navigate("auth", "signin")}>
-            Sign in
-          </button>
+          <button className="button button--outline" onClick={() => navigate("auth", "signin")}>Sign in</button>
         </div>
       </main>
     );
@@ -328,10 +309,7 @@ export function ArtistApply({
   };
 
   const submit = async () => {
-    if (!name.trim() || !bio.trim()) {
-      setError("Name and bio are required.");
-      return;
-    }
+    if (!name.trim() || !bio.trim()) { setError("Name and bio are required."); return; }
     setBusy(true);
     setError(null);
     const { supabase } = await import("../lib/supabase");
@@ -347,9 +325,7 @@ export function ArtistApply({
     setExisting(result);
   };
 
-  if (!loaded) {
-    return <main className="page"><StateBlock kind="loading" message="Loading…" /></main>;
-  }
+  if (!loaded) return <main className="page"><StateBlock kind="loading" message="Loading…" /></main>;
 
   const isPending = existing?.status === "pending";
   const isApproved = existing?.status === "approved";
@@ -372,13 +348,11 @@ export function ArtistApply({
           Your application is being reviewed. You'll be notified when it's approved.
         </div>
       )}
-
       {isApproved && (
         <div className="apply-status apply-status--approved">
           You're approved. Your work shows on The Wall and in your room.
         </div>
       )}
-
       {isRejected && (
         <div className="apply-status apply-status--rejected">
           Your application was declined. You can update and reapply below.
@@ -391,9 +365,7 @@ export function ArtistApply({
             <img src={avatar} alt="Avatar preview" style={{ maxHeight: "18rem", borderRadius: "50%", width: "12rem", height: "12rem", objectFit: "cover" }} />
           ) : (
             <>
-              <div className="icon-placeholder">
-                <span>{name ? name.slice(0, 1) : "?"}</span>
-              </div>
+              <div className="icon-placeholder"><span>{name ? name.slice(0, 1) : "?"}</span></div>
               <h2>Add a photo</h2>
               <p>Click to upload a portrait.</p>
             </>
@@ -427,12 +399,21 @@ export function ArtistApply({
 
 export function AdminPanel({ user }: { user: User | null }) {
   const [pending, setPending] = useState<Artist[]>([]);
+  const [battles, setBattles] = useState<Battle[]>([]);
   const [loading, setLoading] = useState(true);
+
+  /* battle form */
+  const [prompt, setPrompt] = useState("");
+  const [when, setWhen] = useState("");
+  const [duration, setDuration] = useState(20);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   const refresh = () => {
     setLoading(true);
-    loadPendingArtists().then((rows) => {
-      setPending(rows);
+    Promise.all([loadPendingArtists(), loadAllBattles(20)]).then(([a, b]) => {
+      setPending(a);
+      setBattles(b);
       setLoading(false);
     });
   };
@@ -443,13 +424,29 @@ export function AdminPanel({ user }: { user: User | null }) {
     return <main className="page"><StateBlock kind="empty" message="Sign in to view the admin panel." /></main>;
   }
 
-  const approve = async (id: string) => {
-    await setArtistStatus(id, "approved");
+  const approve = async (id: string) => { await setArtistStatus(id, "approved"); refresh(); };
+  const reject = async (id: string) => { await setArtistStatus(id, "rejected"); refresh(); };
+
+  const scheduleBattle = async () => {
+    if (!prompt.trim()) { setErr("Enter a prompt."); return; }
+    if (!when) { setErr("Pick a date and time."); return; }
+    const scheduledAt = new Date(when);
+    if (isNaN(scheduledAt.getTime())) { setErr("Invalid date."); return; }
+
+    setBusy(true);
+    setErr(null);
+    const result = await createBattle(prompt.trim(), scheduledAt, duration);
+    setBusy(false);
+    if (!result) { setErr("Could not create battle. Check your admin email."); return; }
+    setPrompt("");
+    setWhen("");
+    setDuration(20);
     refresh();
   };
 
-  const reject = async (id: string) => {
-    await setArtistStatus(id, "rejected");
+  const removeBattle = async (id: string) => {
+    if (!confirm("Delete this battle?")) return;
+    await deleteBattle(id);
     refresh();
   };
 
@@ -457,7 +454,61 @@ export function AdminPanel({ user }: { user: User | null }) {
     <main className="page">
       <div className="artists__intro">
         <span className="kicker">Admin</span>
-        <h1>Pending applications.</h1>
+        <h1>Schedule a battle.</h1>
+      </div>
+
+      <section className="admin-card" style={{ marginBottom: "2.5rem" }}>
+        <div className="composer-form" style={{ padding: 0 }}>
+          <label>Prompt
+            <input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. Draw the place you go to disappear." />
+          </label>
+          <label>Date and time
+            <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
+          </label>
+          <label>Duration (minutes)
+            <input type="number" value={duration} onChange={(e) => setDuration(parseInt(e.target.value, 10) || 20)} min={1} max={120} />
+          </label>
+          {err && <p className="auth__error">{err}</p>}
+          <div className="composer-form__footer">
+            <span>Appears in the Arena lobby.</span>
+            <button className="button" onClick={scheduleBattle} disabled={busy}>
+              {busy ? "Scheduling…" : "Schedule battle"}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {battles.length > 0 && (
+        <>
+          <div className="section-heading" style={{ marginBottom: "1.5rem" }}>
+            <h2>Scheduled battles</h2>
+            <span>{battles.length}</span>
+          </div>
+          <div className="admin-list" style={{ marginTop: 0 }}>
+            {battles.map((b) => (
+              <article key={b.id} className="admin-card">
+                <div className="admin-card__head">
+                  <div>
+                    <strong>{b.prompt}</strong>
+                    <span>
+                      {new Date(b.scheduledAt).toLocaleString()} · {b.durationMinutes} min
+                    </span>
+                  </div>
+                </div>
+                <div className="admin-card__actions">
+                  <button className="button button--outline" onClick={() => removeBattle(b.id)}>
+                    Delete
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div className="section-heading" style={{ marginTop: "2.5rem", marginBottom: "1.5rem" }}>
+        <h2>Pending applications</h2>
+        <span>{pending.length}</span>
       </div>
 
       {loading && <StateBlock kind="loading" message="Loading…" />}
@@ -483,9 +534,7 @@ export function AdminPanel({ user }: { user: User | null }) {
               </div>
               <p>{a.bio}</p>
               {a.website && (
-                <a href={a.website} target="_blank" rel="noreferrer" className="admin-card__link">
-                  {a.website}
-                </a>
+                <a href={a.website} target="_blank" rel="noreferrer" className="admin-card__link">{a.website}</a>
               )}
               <div className="admin-card__actions">
                 <button className="button" onClick={() => approve(a.id)}>Approve</button>

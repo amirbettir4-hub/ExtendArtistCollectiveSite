@@ -352,7 +352,7 @@ function rowToArtwork(row: ArtworkRow): Artwork {
 }
 
 /* =========================================================
-   SAVED ARTWORKS (collection)
+   SAVED ARTWORKS
 ========================================================= */
 
 export async function loadMySavedArtworkIds(): Promise<string[]> {
@@ -369,10 +369,7 @@ export async function loadMySavedArtworkIds(): Promise<string[]> {
   return data.map((r: { artwork_id: string }) => r.artwork_id);
 }
 
-export async function setArtworkSaved(
-  artworkId: string,
-  saved: boolean
-): Promise<boolean> {
+export async function setArtworkSaved(artworkId: string, saved: boolean): Promise<boolean> {
   if (!supabase) return false;
   const { data: userData } = await supabase.auth.getUser();
   const userId = userData.user?.id;
@@ -527,10 +524,7 @@ export async function loadPendingArtists(): Promise<Artist[]> {
   return data.map(rowToArtist);
 }
 
-export async function setArtistStatus(
-  id: string,
-  status: "approved" | "rejected"
-): Promise<boolean> {
+export async function setArtistStatus(id: string, status: "approved" | "rejected"): Promise<boolean> {
   if (!supabase) return false;
   const { error } = await supabase
     .from("artists")
@@ -552,4 +546,182 @@ function rowToArtist(row: ArtistRow): Artist {
     status: (row.status as Artist["status"]) ?? "pending",
     createdAt: new Date(row.created_at).getTime(),
   };
+}
+
+/* =========================================================
+   BATTLES
+========================================================= */
+
+export type Battle = {
+  id: string;
+  prompt: string;
+  scheduledAt: number;
+  durationMinutes: number;
+  createdAt: number;
+};
+
+type BattleRow = {
+  id: string;
+  prompt: string;
+  scheduled_at: string;
+  duration_minutes: number;
+  created_at: string;
+};
+
+export async function loadNextBattle(): Promise<Battle | null> {
+  if (!supabase) return null;
+  const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from("battles")
+    .select("*")
+    .gt("scheduled_at", cutoff)
+    .order("scheduled_at", { ascending: true })
+    .limit(1);
+  if (error || !data || data.length === 0) return null;
+  return rowToBattle(data[0]);
+}
+
+export async function loadAllBattles(limit = 20): Promise<Battle[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("battles")
+    .select("*")
+    .order("scheduled_at", { ascending: false })
+    .limit(limit);
+  if (error || !data) return [];
+  return data.map(rowToBattle);
+}
+
+export async function createBattle(
+  prompt: string,
+  scheduledAt: Date,
+  durationMinutes = 20
+): Promise<Battle | null> {
+  if (!supabase) return null;
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id ?? null;
+  const { data, error } = await supabase
+    .from("battles")
+    .insert({
+      prompt: prompt.trim(),
+      scheduled_at: scheduledAt.toISOString(),
+      duration_minutes: durationMinutes,
+      created_by: userId,
+    })
+    .select()
+    .single();
+  if (error || !data) return null;
+  return rowToBattle(data);
+}
+
+export async function deleteBattle(id: string): Promise<boolean> {
+  if (!supabase) return false;
+  const { error } = await supabase.from("battles").delete().eq("id", id);
+  return !error;
+}
+
+function rowToBattle(row: BattleRow): Battle {
+  return {
+    id: row.id,
+    prompt: row.prompt,
+    scheduledAt: new Date(row.scheduled_at).getTime(),
+    durationMinutes: row.duration_minutes,
+    createdAt: new Date(row.created_at).getTime(),
+  };
+}
+
+/* =========================================================
+   REVIEWS
+========================================================= */
+
+export type Review = {
+  id: string;
+  artworkId: string;
+  userId: string;
+  userName: string;
+  rating: number;
+  body: string;
+  createdAt: number;
+};
+
+type ReviewRow = {
+  id: string;
+  artwork_id: string;
+  user_id: string;
+  user_name: string;
+  rating: number;
+  body: string | null;
+  created_at: string;
+};
+
+export async function loadAllReviews(): Promise<Review[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("reviews")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error || !data) return [];
+  return data.map(rowToReview);
+}
+
+export async function saveReview(
+  artworkId: string,
+  rating: number,
+  body: string
+): Promise<Review | null> {
+  if (!supabase) return null;
+  const { data: userData } = await supabase.auth.getUser();
+  const user = userData.user;
+  if (!user) return null;
+
+  const userName =
+    (user.user_metadata?.name as string | undefined) ||
+    user.email?.split("@")[0] ||
+    "Guest";
+
+  const { data, error } = await supabase
+    .from("reviews")
+    .upsert(
+      {
+        artwork_id: artworkId,
+        user_id: user.id,
+        user_name: userName,
+        rating,
+        body: body.trim(),
+      },
+      { onConflict: "artwork_id,user_id" }
+    )
+    .select()
+    .single();
+
+  if (error || !data) return null;
+  return rowToReview(data);
+}
+
+export async function deleteReview(id: string): Promise<boolean> {
+  if (!supabase) return false;
+  const { error } = await supabase.from("reviews").delete().eq("id", id);
+  return !error;
+}
+
+function rowToReview(row: ReviewRow): Review {
+  return {
+    id: row.id,
+    artworkId: row.artwork_id,
+    userId: row.user_id,
+    userName: row.user_name,
+    rating: row.rating,
+    body: row.body ?? "",
+    createdAt: new Date(row.created_at).getTime(),
+  };
+}
+
+/* =========================================================
+   RATING HELPERS
+========================================================= */
+
+export function averageRating(reviews: Review[]): { avg: number; count: number } {
+  if (reviews.length === 0) return { avg: 0, count: 0 };
+  const sum = reviews.reduce((acc, r) => acc + r.rating, 0);
+  return { avg: sum / reviews.length, count: reviews.length };
 }

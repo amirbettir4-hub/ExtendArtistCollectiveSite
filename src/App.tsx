@@ -19,6 +19,8 @@ import {
   loadArtworks, saveArtwork, type Artwork,
   loadMyArtist, type Artist,
   loadMySavedArtworkIds, setArtworkSaved,
+  loadNextBattle, type Battle,
+  loadAllReviews, saveReview, deleteReview, averageRating, type Review,
 } from "./lib/db";
 import { signInWithMagicLink, signOut as authSignOut, onAuthChange } from "./lib/auth";
 
@@ -51,6 +53,7 @@ export type Realtime = {
 /* ============ DATA ============ */
 const BATTLE_ID = 47;
 const ADMIN_EMAILS = ["amirbettir4@gmail.com"];
+const DEFAULT_PROMPT = "Draw the place you go to disappear.";
 
 const portraits = [
   "https://images.unsplash.com/photo-1628359355624-855775b5c9c4?auto=format&fit=crop&w=320&q=80",
@@ -261,9 +264,7 @@ function WallGrid({ navigate, artworks, loading, savedIds, onToggleSaved, user }
           aria-label="Search artworks"
         />
         {search && (
-          <button className="wall-search__clear" onClick={() => setSearch("")} aria-label="Clear search">
-            ✕
-          </button>
+          <button className="wall-search__clear" onClick={() => setSearch("")} aria-label="Clear search">✕</button>
         )}
       </div>
 
@@ -403,7 +404,7 @@ function InquiryModal({ work, onClose }: { work: Work; onClose: () => void }) {
   );
 }
 
-function ArtworkDetail({ id, navigate, artworks, artists, savedIds, onToggleSaved, user }: {
+function ArtworkDetail({ id, navigate, artworks, artists, savedIds, onToggleSaved, user, reviews, onReviewChange }: {
   id: string;
   navigate: (s: Section, screen: string, param?: string | number) => void;
   artworks: Work[];
@@ -411,9 +412,32 @@ function ArtworkDetail({ id, navigate, artworks, artists, savedIds, onToggleSave
   savedIds: string[];
   onToggleSaved: (id: string) => void;
   user: User | null;
+  reviews: Review[];
+  onReviewChange: (r: Review | null, deletedId?: string) => void;
 }) {
   const [showInquiry, setShowInquiry] = useState(false);
+  const [stars, setStars] = useState(0);
+  const [hoverStars, setHoverStars] = useState(0);
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
   const work = artworks.find((w) => w.id === id);
+
+  const workReviews = work ? reviews.filter((r) => r.artworkId === work.id) : [];
+  const { avg, count } = averageRating(workReviews);
+  const myName = user?.name || (user?.email ? user.email.split("@")[0] : "");
+  const activeReview = workReviews.find((r) => r.userName === myName);
+
+  useEffect(() => {
+    if (activeReview) {
+      setStars(activeReview.rating);
+      setBody(activeReview.body);
+    } else {
+      setStars(0);
+      setBody("");
+    }
+  }, [activeReview?.id]);
 
   if (!work) {
     return (
@@ -427,6 +451,23 @@ function ArtworkDetail({ id, navigate, artworks, artists, savedIds, onToggleSave
   const ownerArtist = artists.find((a) => a.userId === work.artistId);
   const isSaved = savedIds.includes(work.id);
 
+  const submitReview = async () => {
+    if (!user) { navigate("auth", "signin"); return; }
+    if (stars < 1) { setReviewError("Pick a star rating first."); return; }
+    setBusy(true);
+    setReviewError(null);
+    const result = await saveReview(work.id, stars, body);
+    setBusy(false);
+    if (!result) { setReviewError("Could not save review. Try again."); return; }
+    onReviewChange(result);
+  };
+
+  const removeReview = async (rid: string) => {
+    if (!confirm("Delete your review?")) return;
+    const ok = await deleteReview(rid);
+    if (ok) onReviewChange(null, rid);
+  };
+
   return (
     <main className="page artwork-detail">
       <button className="back-link" onClick={() => navigate("wall", "grid")}>
@@ -437,6 +478,18 @@ function ArtworkDetail({ id, navigate, artworks, artists, savedIds, onToggleSave
         <div className="artwork-detail__info">
           <span className="kicker">{work.artistName}</span>
           <h1>{work.title}</h1>
+
+          {count > 0 && (
+            <div className="artwork-rating">
+              <span className="artwork-rating__stars">
+                {"★".repeat(Math.round(avg))}{"☆".repeat(5 - Math.round(avg))}
+              </span>
+              <span className="artwork-rating__meta">
+                {avg.toFixed(1)} · {count} review{count === 1 ? "" : "s"}
+              </span>
+            </div>
+          )}
+
           <dl>
             <div><dt>Medium</dt><dd>{work.medium}</dd></div>
             <div><dt>Dimensions</dt><dd>{work.dimensions || "—"}</dd></div>
@@ -459,45 +512,156 @@ function ArtworkDetail({ id, navigate, artworks, artists, savedIds, onToggleSave
           )}
         </div>
       </div>
+
+      <section className="reviews">
+        <div className="reviews__head">
+          <h2>Reviews</h2>
+          <span>{count} total</span>
+        </div>
+
+        {user ? (
+          <div className="review-form">
+            <div className="review-form__stars">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  className={`star ${(hoverStars || stars) >= n ? "on" : ""}`}
+                  onMouseEnter={() => setHoverStars(n)}
+                  onMouseLeave={() => setHoverStars(0)}
+                  onClick={() => setStars(n)}
+                  aria-label={`${n} star${n === 1 ? "" : "s"}`}
+                >
+                  ★
+                </button>
+              ))}
+              {stars > 0 && <span className="review-form__pick">{stars} / 5</span>}
+            </div>
+            <textarea
+              rows={3}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="Optional — say a few words about this work."
+            />
+            {reviewError && <p className="auth__error">{reviewError}</p>}
+            <div className="review-form__footer">
+              {activeReview && (
+                <button className="review-form__delete" onClick={() => removeReview(activeReview.id)}>
+                  Delete my review
+                </button>
+              )}
+              <button className="button" onClick={submitReview} disabled={busy || stars < 1}>
+                {busy ? "Saving…" : activeReview ? "Update review" : "Post review"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="review-signin">
+            <span>Sign in to leave a review.</span>
+            <Button variant="outline" onClick={() => navigate("auth", "signin")}>Sign in</Button>
+          </div>
+        )}
+
+        {workReviews.length === 0 ? (
+          <p className="reviews__empty">No reviews yet.</p>
+        ) : (
+          <ul className="review-list">
+            {workReviews.map((r) => (
+              <li key={r.id} className="review-item">
+                <div className="review-item__head">
+                  <span className="review-item__name">{r.userName}</span>
+                  <span className="review-item__stars">
+                    {"★".repeat(r.rating)}{"☆".repeat(5 - r.rating)}
+                  </span>
+                  <span className="review-item__date">
+                    {new Date(r.createdAt).toLocaleDateString()}
+                  </span>
+                </div>
+                {r.body && <p className="review-item__body">{r.body}</p>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       {showInquiry && <InquiryModal work={work} onClose={() => setShowInquiry(false)} />}
     </main>
   );
 }
 
 /* ============ ARENA ============ */
-function ArenaLobby({ navigate }: { navigate: (s: Section, screen: string, param?: string | number) => void }) {
-  const [seconds, setSeconds] = useState(14 * 60 + 27);
+function ArenaLobby({ navigate, battle }: {
+  navigate: (s: Section, screen: string, param?: string | number) => void;
+  battle: Battle | null;
+}) {
+  const [now, setNow] = useState(Date.now());
   useEffect(() => {
-    const t = window.setInterval(() => setSeconds((v) => (v > 0 ? v - 1 : 900)), 1000);
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(t);
   }, []);
-  const time = `00:${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+
+  const diff = battle ? Math.max(0, Math.floor((battle.scheduledAt - now) / 1000)) : 0;
+  const isLive = battle != null && diff === 0;
+  const hours = String(Math.floor(diff / 3600)).padStart(2, "0");
+  const minutes = String(Math.floor((diff % 3600) / 60)).padStart(2, "0");
+  const seconds = String(diff % 60).padStart(2, "0");
+  const time = `${hours}:${minutes}:${seconds}`;
+
   return (
     <main className="lobby page">
-      <div className="eyebrow"><span className="live-dot" />Next live battle</div>
+      <div className="eyebrow">
+        <span className="live-dot" />
+        {battle ? (isLive ? "Battle is live" : "Next live battle") : "No battle scheduled"}
+      </div>
+
       <div className="lobby__hero">
         <div>
           <h1>Make something<br /><em>unrepeatable.</em></h1>
-          <p>One prompt. Twenty minutes. No revisions.<br />A live drawing session for the collective.</p>
+          <p>
+            One prompt. {battle?.durationMinutes || 20} minutes. No revisions.<br />
+            A live drawing session for the collective.
+          </p>
         </div>
         <div className="countdown">
-          <span>Doors open in</span><strong>{time}</strong>
-          <small>Hours&nbsp;&nbsp;&nbsp;Minutes&nbsp;&nbsp;&nbsp;Seconds</small>
+          {battle ? (
+            <>
+              <span>{isLive ? "Started" : "Doors open in"}</span>
+              <strong>{isLive ? "Live" : time}</strong>
+              <small>{isLive ? "Battle in progress" : "Hours\u00A0\u00A0\u00A0Minutes\u00A0\u00A0\u00A0Seconds"}</small>
+            </>
+          ) : (
+            <>
+              <span>Next battle</span>
+              <strong>—</strong>
+              <small>Check back soon</small>
+            </>
+          )}
         </div>
       </div>
+
+      {battle && (
+        <div className="lobby__prompt">
+          <span className="kicker">Tonight's prompt</span>
+          <h2>{battle.prompt}</h2>
+        </div>
+      )}
+
       <div className="lobby__action">
-        <Button onClick={() => navigate("arena", "canvas")}>Enter the arena <Icon name="arrow" /></Button>
+        <Button onClick={() => navigate("arena", "canvas")}>
+          {isLive ? "Enter the live battle" : "Enter the arena"} <Icon name="arrow" />
+        </Button>
         <Button variant="outline" onClick={() => navigate("arena", "watch")}>Watch live</Button>
       </div>
     </main>
   );
 }
 
-function CanvasView({ navigate, onSubmit, user, realtime }: {
+function CanvasView({ navigate, onSubmit, user, realtime, battle }: {
   navigate: (s: Section, screen: string, param?: string | number) => void;
   onSubmit: (s: Submission) => void;
   user: User | null;
   realtime: Realtime;
+  battle: Battle | null;
 }) {
   const canvasRef = useRef<LiveCanvasHandle>(null);
   const [tool, setTool] = useState<Tool>("brush");
@@ -506,13 +670,14 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
   const [submitted, setSubmitted] = useState(false);
 
   const { remote, liveRef } = useRemoteStrokes(realtime.lastMsg, realtime.userId);
+  const prompt = battle?.prompt || DEFAULT_PROMPT;
 
   useEffect(() => {
     if (!realtime.isHost) return;
     if (realtime.phase !== "countdown") return;
     if (realtime.secondsLeft > 0) return;
-    realtime.startPhase("drawing", 20 * 60);
-  }, [realtime.phase, realtime.secondsLeft, realtime.isHost]);
+    realtime.startPhase("drawing", (battle?.durationMinutes || 20) * 60);
+  }, [realtime.phase, realtime.secondsLeft, realtime.isHost, battle?.durationMinutes]);
 
   useEffect(() => {
     if (!realtime.isHost) return;
@@ -533,7 +698,7 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
     const name = user?.name || (user?.email ? user.email.split("@")[0] : "Guest");
     const sub: Submission = {
       id: uid(), artistName: name, artistAvatar: portraits[0],
-      image, strokes, prompt: realtime.prompt, battleId: BATTLE_ID,
+      image, strokes, prompt, battleId: BATTLE_ID,
       createdAt: Date.now(), votes: 0,
     };
     onSubmit(sub);
@@ -550,11 +715,13 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
           {realtime.connected ? `Live · ${realtime.present.length} here` : "Connecting…"}
         </div>
         <div className="canvas-waiting">
-          <span className="kicker">Battle {BATTLE_ID} · Waiting for artists</span>
+          <span className="kicker">Waiting for artists</span>
           <h1>Ready when<br /><em>you are.</em></h1>
           <p>{realtime.present.length} in the room</p>
           {realtime.isHost ? (
-            <Button onClick={() => realtime.startPhase("countdown", 3)}>Start the battle <Icon name="arrow" /></Button>
+            <Button onClick={() => realtime.startPhase("countdown", 3, prompt)}>
+              Start the battle <Icon name="arrow" />
+            </Button>
           ) : (
             <p className="canvas-waiting__hint">Waiting for the host to start…</p>
           )}
@@ -567,11 +734,14 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
   if (realtime.phase === "countdown") {
     return (
       <main className="prompt-screen">
-        <div className="prompt-screen__top"><span>Tonight's prompt</span><span>Battle {BATTLE_ID}</span></div>
+        <div className="prompt-screen__top">
+          <span>Tonight's prompt</span>
+          <span>Battle {BATTLE_ID}</span>
+        </div>
         <div className="prompt-screen__content">
           <span className="prompt-screen__count">{realtime.secondsLeft || 3}</span>
           <h1>{realtime.prompt}</h1>
-          <p>20 minutes · Any medium · One submission</p>
+          <p>{battle?.durationMinutes || 20} minutes · Any medium · One submission</p>
         </div>
       </main>
     );
@@ -786,9 +956,7 @@ function StudioFeed({ posts, user, savedIds, toggleSaved, loading, navigate }: {
       <p>Shared in order, as it happens.<br />No rankings. No recommendations.</p>
       {user && <p className="feed__you">Signed in as <strong>{user.name || user.email}</strong></p>}
       <div style={{ marginTop: "1.5rem" }}>
-        <button className="button" onClick={() => navigate("studio", "post")}>
-          New post
-        </button>
+        <button className="button" onClick={() => navigate("studio", "post")}>New post</button>
       </div>
     </div>
   );
@@ -1132,6 +1300,8 @@ export default function App() {
   const [postSaves, setPostSaves] = useState<string[]>([]);
   const [savedArtworkIds, setSavedArtworkIds] = useState<string[]>([]);
   const [myArtist, setMyArtist] = useState<Artist | null>(null);
+  const [nextBattle, setNextBattle] = useState<Battle | null>(null);
+  const [reviews, setReviews] = useState<Review[]>([]);
 
   useEffect(() => {
     const unsubscribe = onAuthChange((u) => setUser(u));
@@ -1168,6 +1338,15 @@ export default function App() {
     loadArtworks().then((rows) => { setArtworks(rows); setArtworksLoading(false); });
   }, []);
   useEffect(() => { loadArtistsAll(); }, []);
+  useEffect(() => { loadAllReviews().then(setReviews); }, []);
+
+  useEffect(() => {
+    if (section !== "arena") return;
+    const refresh = () => loadNextBattle().then(setNextBattle);
+    refresh();
+    const t = setInterval(refresh, 60_000);
+    return () => clearInterval(t);
+  }, [section]);
 
   const [lastMsg, setLastMsg] = useState<RoomMessage | null>(null);
   const [guestId] = useState(() => `app-${Math.random().toString(36).slice(2, 8)}`);
@@ -1207,19 +1386,12 @@ export default function App() {
     setPostSaves((v) => (v.includes(id) ? v.filter((x) => x !== id) : [...v, id]));
 
   const toggleArtworkSaved = async (artworkId: string) => {
-    if (!user) {
-      navigate("auth", "signin");
-      return;
-    }
+    if (!user) { navigate("auth", "signin"); return; }
     const isSaved = savedArtworkIds.includes(artworkId);
-    setSavedArtworkIds((v) =>
-      isSaved ? v.filter((x) => x !== artworkId) : [...v, artworkId]
-    );
+    setSavedArtworkIds((v) => isSaved ? v.filter((x) => x !== artworkId) : [...v, artworkId]);
     const ok = await setArtworkSaved(artworkId, !isSaved);
     if (!ok) {
-      setSavedArtworkIds((v) =>
-        isSaved ? [...v, artworkId] : v.filter((x) => x !== artworkId)
-      );
+      setSavedArtworkIds((v) => isSaved ? [...v, artworkId] : v.filter((x) => x !== artworkId));
       alert("Could not update collection. Try again.");
     }
   };
@@ -1240,6 +1412,22 @@ export default function App() {
     if (!ok) {
       setSubmissions((v) => v.map((s) => (s.id === id ? { ...s, votes: s.votes - 1 } : s)));
       alert("Could not save vote. Please sign in first.");
+    }
+  };
+
+  const handleReviewChange = (r: Review | null, deletedId?: string) => {
+    if (deletedId) {
+      setReviews((prev) => prev.filter((x) => x.id !== deletedId));
+    } else if (r) {
+      setReviews((prev) => {
+        const idx = prev.findIndex((x) => x.id === r.id);
+        if (idx >= 0) {
+          const copy = [...prev];
+          copy[idx] = r;
+          return copy;
+        }
+        return [r, ...prev];
+      });
     }
   };
 
@@ -1322,13 +1510,23 @@ export default function App() {
           savedIds={savedArtworkIds}
           onToggleSaved={toggleArtworkSaved}
           user={user}
+          reviews={reviews}
+          onReviewChange={handleReviewChange}
         />
       )}
       {section === "wall" && wallScreen === "artists" && <ArtistDirectory navigate={navigate} />}
 
-      {section === "arena" && screen === "lobby" && <ArenaLobby navigate={navigate} />}
+      {section === "arena" && screen === "lobby" && (
+        <ArenaLobby navigate={navigate} battle={nextBattle} />
+      )}
       {section === "arena" && screen === "canvas" && (
-        <CanvasView navigate={navigate} onSubmit={addSubmission} user={user} realtime={realtime} />
+        <CanvasView
+          navigate={navigate}
+          onSubmit={addSubmission}
+          user={user}
+          realtime={realtime}
+          battle={nextBattle}
+        />
       )}
       {section === "arena" && screen === "watch" && <SpectatorView navigate={navigate} realtime={realtime} />}
       {section === "arena" && screen === "voting" && (
