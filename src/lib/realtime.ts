@@ -70,8 +70,7 @@ export function useRealtimeRoom(
         const users: PresenceUser[] = Object.values(state).flat();
         setPresent(users);
       })
-      .subscribe(async (status, err) => {
-        console.log("CHANNEL STATUS:", status, err);
+      .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           setConnected(true);
           await channel.track(user);
@@ -145,13 +144,11 @@ export function useSyncedPhase(
   const [prompt, setPrompt] = useState("Draw the place you go to disappear.");
   const [tick, setTick] = useState(Date.now());
 
-  /* tick every 250ms for a smooth countdown */
   useEffect(() => {
     const t = window.setInterval(() => setTick(Date.now()), 250);
     return () => window.clearInterval(t);
   }, []);
 
-  /* listen for phase changes broadcast by the host */
   useEffect(() => {
     if (!incoming || incoming.type !== "phase") return;
     setPhase(incoming.phase);
@@ -161,7 +158,6 @@ export function useSyncedPhase(
 
   const secondsLeft = endsAt ? Math.max(0, Math.round((endsAt - tick) / 1000)) : 0;
 
-  /** Broadcast a new phase. Only the host should call this. */
   const startPhase = useCallback(
     (next: BattlePhase, durationSec: number | null, newPrompt?: string) => {
       const end = durationSec ? Date.now() + durationSec * 1000 : null;

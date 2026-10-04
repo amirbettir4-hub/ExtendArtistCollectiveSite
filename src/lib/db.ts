@@ -49,13 +49,9 @@ async function uploadArtwork(dataUrl: string, submissionId: string): Promise<str
 
 export async function saveSubmission(sub: Submission): Promise<boolean> {
   if (!supabase) return false;
-
   const { data: userData } = await supabase.auth.getUser();
   const userId = userData.user?.id;
-  if (!userId) {
-    console.warn("saveSubmission: not signed in");
-    return false;
-  }
+  if (!userId) return false;
 
   const url = await uploadArtwork(sub.image, sub.id);
   if (!url) return false;
@@ -79,19 +75,14 @@ export async function saveSubmission(sub: Submission): Promise<boolean> {
 
 export async function castVote(submissionId: string): Promise<boolean> {
   if (!supabase) return false;
-
   const { data: userData } = await supabase.auth.getUser();
   const userId = userData.user?.id;
-  if (!userId) {
-    console.warn("castVote: not signed in");
-    return false;
-  }
+  if (!userId) return false;
 
   const { error } = await supabase.from("votes").insert({
     submission_id: submissionId,
     user_id: userId,
   });
-
   if (error && error.code !== "23505") {
     console.error("castVote:", error);
     return false;
@@ -137,10 +128,7 @@ export async function loadPosts(): Promise<Post[]> {
     .select("*")
     .order("created_at", { ascending: false })
     .limit(100);
-  if (error || !data) {
-    console.error("loadPosts:", error);
-    return [];
-  }
+  if (error || !data) return [];
   return data.map((row: PostRow) => ({
     id: row.id,
     artist: row.artist_name,
@@ -155,33 +143,11 @@ export async function loadPosts(): Promise<Post[]> {
   }));
 }
 
-export async function savePost(
-  post: Post,
-  imageDataUrl?: string
-): Promise<boolean> {
+export async function savePost(post: Post): Promise<boolean> {
   if (!supabase) return false;
-
   const { data: userData } = await supabase.auth.getUser();
   const userId = userData.user?.id;
-  if (!userId) {
-    console.warn("savePost: not signed in");
-    return false;
-  }
-
-  let imageUrl = post.image;
-
-  if (imageDataUrl && imageDataUrl.startsWith("data:")) {
-    const blob = await (await fetch(imageDataUrl)).blob();
-    const path = `${post.id}.png`;
-    const { error: uploadErr } = await supabase.storage
-      .from("studio-art")
-      .upload(path, blob, { contentType: "image/png", upsert: true });
-    if (uploadErr) {
-      console.error("savePost upload:", uploadErr);
-      return false;
-    }
-    imageUrl = supabase.storage.from("studio-art").getPublicUrl(path).data.publicUrl;
-  }
+  if (!userId) return false;
 
   const { error } = await supabase.from("posts").insert({
     id: post.id,
@@ -189,16 +155,12 @@ export async function savePost(
     artist_name: post.artist,
     handle: post.handle,
     avatar_url: post.avatar,
-    image_url: imageUrl,
+    image_url: post.image,
     status: post.status,
     medium: post.medium,
     caption: post.caption,
   });
-  if (error) {
-    console.error("savePost:", error);
-    return false;
-  }
-  return true;
+  return !error;
 }
 
 function formatTime(iso: string): string {
@@ -241,7 +203,6 @@ export async function saveInquiry(
   message: string
 ): Promise<boolean> {
   if (!supabase) return false;
-
   const { data: userData } = await supabase.auth.getUser();
   const buyerId = userData.user?.id ?? null;
 
@@ -254,12 +215,7 @@ export async function saveInquiry(
     buyer_email: buyerEmail,
     message,
   });
-
-  if (error) {
-    console.error("saveInquiry:", error);
-    return false;
-  }
-  return true;
+  return !error;
 }
 
 export async function loadInquiriesForArtist(artistName: string): Promise<Inquiry[]> {
@@ -269,10 +225,7 @@ export async function loadInquiriesForArtist(artistName: string): Promise<Inquir
     .select("*")
     .eq("artist_name", artistName)
     .order("created_at", { ascending: false });
-  if (error || !data) {
-    console.error("loadInquiriesForArtist:", error);
-    return [];
-  }
+  if (error || !data) return [];
   return data.map((row: InquiryRow) => ({
     id: row.id,
     workId: row.artwork_id,
@@ -324,10 +277,18 @@ export async function loadArtworks(): Promise<Artwork[]> {
     .from("artworks")
     .select("*")
     .order("created_at", { ascending: false });
-  if (error || !data) {
-    console.error("loadArtworks:", error);
-    return [];
-  }
+  if (error || !data) return [];
+  return data.map(rowToArtwork);
+}
+
+export async function loadArtworksByUser(userId: string): Promise<Artwork[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("artworks")
+    .select("*")
+    .eq("artist_id", userId)
+    .order("created_at", { ascending: false });
+  if (error || !data) return [];
   return data.map(rowToArtwork);
 }
 
@@ -336,13 +297,9 @@ export async function saveArtwork(
   imageDataUrl: string
 ): Promise<Artwork | null> {
   if (!supabase) return null;
-
   const { data: userData } = await supabase.auth.getUser();
   const userId = userData.user?.id;
-  if (!userId) {
-    console.warn("saveArtwork: not signed in");
-    return null;
-  }
+  if (!userId) return null;
 
   const id = crypto.randomUUID();
   const blob = await (await fetch(imageDataUrl)).blob();
@@ -350,10 +307,7 @@ export async function saveArtwork(
   const { error: upErr } = await supabase.storage
     .from("wall-art")
     .upload(path, blob, { contentType: "image/png", upsert: false });
-  if (upErr) {
-    console.error("saveArtwork upload:", upErr);
-    return null;
-  }
+  if (upErr) return null;
   const imageUrl = supabase.storage.from("wall-art").getPublicUrl(path).data.publicUrl;
 
   const { data, error } = await supabase
@@ -373,10 +327,7 @@ export async function saveArtwork(
     .select()
     .single();
 
-  if (error || !data) {
-    console.error("saveArtwork insert:", error);
-    return null;
-  }
+  if (error || !data) return null;
   return rowToArtwork(data);
 }
 
@@ -392,6 +343,169 @@ function rowToArtwork(row: ArtworkRow): Artwork {
     year: row.year ?? new Date().getFullYear(),
     price: row.price,
     available: row.available,
+    createdAt: new Date(row.created_at).getTime(),
+  };
+}
+
+/* =========================================================
+   ARTISTS
+========================================================= */
+
+export type Artist = {
+  id: string;
+  userId: string;
+  name: string;
+  location: string;
+  medium: string;
+  bio: string;
+  website: string;
+  avatar: string;
+  status: "pending" | "approved" | "rejected";
+  createdAt: number;
+};
+
+type ArtistRow = {
+  id: string;
+  user_id: string;
+  name: string;
+  location: string | null;
+  medium: string | null;
+  bio: string | null;
+  website: string | null;
+  avatar_url: string | null;
+  status: string;
+  created_at: string;
+};
+
+export async function loadArtists(): Promise<Artist[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("artists")
+    .select("*")
+    .eq("status", "approved")
+    .order("created_at", { ascending: true });
+  if (error || !data) return [];
+  return data.map(rowToArtist);
+}
+
+export async function loadArtistById(id: string): Promise<Artist | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("artists")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error || !data) return null;
+  return rowToArtist(data);
+}
+
+export async function loadMyArtist(userId: string): Promise<Artist | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("artists")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return rowToArtist(data);
+}
+
+export async function saveArtistProfile(
+  userId: string,
+  profile: Omit<Artist, "id" | "userId" | "status" | "createdAt">,
+  avatarDataUrl: string | null
+): Promise<Artist | null> {
+  if (!supabase) return null;
+
+  let avatarUrl = profile.avatar;
+
+  if (avatarDataUrl && avatarDataUrl.startsWith("data:")) {
+    const blob = await (await fetch(avatarDataUrl)).blob();
+    const path = `${userId}-avatar.png`;
+    const { error: upErr } = await supabase.storage
+      .from("artist-avatars")
+      .upload(path, blob, { contentType: "image/png", upsert: true });
+    if (upErr) {
+      console.error("avatar upload:", upErr);
+    } else {
+      avatarUrl = supabase.storage.from("artist-avatars").getPublicUrl(path).data.publicUrl;
+    }
+  }
+
+  const existing = await loadMyArtist(userId);
+
+  if (existing) {
+    /* update */
+    const { data, error } = await supabase
+      .from("artists")
+      .update({
+        name: profile.name,
+        location: profile.location,
+        medium: profile.medium,
+        bio: profile.bio,
+        website: profile.website,
+        avatar_url: avatarUrl,
+      })
+      .eq("user_id", userId)
+      .select()
+      .single();
+    if (error || !data) return null;
+    return rowToArtist(data);
+  } else {
+    /* insert */
+    const { data, error } = await supabase
+      .from("artists")
+      .insert({
+        user_id: userId,
+        name: profile.name,
+        location: profile.location,
+        medium: profile.medium,
+        bio: profile.bio,
+        website: profile.website,
+        avatar_url: avatarUrl,
+        status: "pending",
+      })
+      .select()
+      .single();
+    if (error || !data) return null;
+    return rowToArtist(data);
+  }
+}
+
+export async function loadPendingArtists(): Promise<Artist[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("artists")
+    .select("*")
+    .eq("status", "pending")
+    .order("created_at", { ascending: true });
+  if (error || !data) return [];
+  return data.map(rowToArtist);
+}
+
+export async function setArtistStatus(
+  id: string,
+  status: "approved" | "rejected"
+): Promise<boolean> {
+  if (!supabase) return false;
+  const { error } = await supabase
+    .from("artists")
+    .update({ status, reviewed_at: new Date().toISOString() })
+    .eq("id", id);
+  return !error;
+}
+
+function rowToArtist(row: ArtistRow): Artist {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    name: row.name,
+    location: row.location ?? "",
+    medium: row.medium ?? "",
+    bio: row.bio ?? "",
+    website: row.website ?? "",
+    avatar: row.avatar_url ?? "",
+    status: (row.status as Artist["status"]) ?? "pending",
     createdAt: new Date(row.created_at).getTime(),
   };
 }

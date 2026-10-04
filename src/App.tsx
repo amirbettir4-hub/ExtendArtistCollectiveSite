@@ -2,9 +2,10 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { TimelapseReplay } from "./components/TimelapseReplay";
 import { LiveCanvas, type LiveCanvasHandle } from "./components/LiveCanvas";
 import { ArenaChat } from "./components/ArenaChat";
+import { ArtistDirectory, ArtistRoom, ArtistApply, AdminPanel } from "./components/ArtistPages";
 import {
   uid,
-  type Submission, type Post, type Inquiry, type User,
+  type Submission, type Post, type User,
 } from "./store";
 import {
   useRealtimeRoom, useRemoteStrokes, useSyncedPhase,
@@ -13,17 +14,16 @@ import {
 import {
   loadSubmissions, saveSubmission, castVote as castVoteDB,
   loadPosts, savePost,
-  saveInquiry, loadInquiriesForArtist,
+  saveInquiry,
   loadArtworks, saveArtwork, type Artwork,
+  loadMyArtist, type Artist,
 } from "./lib/db";
 import { signInWithMagicLink, signOut as authSignOut, onAuthChange } from "./lib/auth";
-
-console.log("SUPABASE CHECK →", import.meta.env.VITE_SUPABASE_URL);
 
 /* ============ TYPES ============ */
 type Section = "wall" | "studio" | "arena" | "auth";
 type ArenaScreen = "lobby" | "canvas" | "watch" | "voting" | "results";
-type StudioScreen = "feed" | "composer" | "room";
+type StudioScreen = "feed" | "composer" | "room" | "apply" | "admin" | `room/${string}`;
 type WallScreen = "grid" | "detail" | "artists";
 type AuthScreen = "signin" | "signup";
 type Tool = "brush" | "eraser";
@@ -48,6 +48,7 @@ export type Realtime = {
 /* ============ DATA ============ */
 const BATTLE_ID = 47;
 const BATTLE_PROMPT = "Draw the place you go to disappear.";
+const ADMIN_EMAILS = ["amirbettir4@gmail.com"];
 
 const art = [
   "https://images.unsplash.com/photo-1533208087231-c3618eab623c?auto=format&fit=crop&w=1200&q=85",
@@ -69,20 +70,7 @@ const portraits = [
 ];
 const artistNames = ["Theo K.", "Mara Vale", "June Ori", "Sam Dune", "Inez L.", "K. Moss"];
 
-const seedPosts: Post[] = [
-  { id: "p1", artist: "Mara Vale", handle: "@maravale", time: "Today, 10:42",
-    status: "Finished", medium: "Oil & graphite", image: art[0], avatar: portraits[1],
-    caption: "New studies from the edge of the salt marsh. Letting the graphite interrupt the oil this time.",
-    createdAt: Date.now() - 3600_000 },
-  { id: "p2", artist: "Theo K.", handle: "@theok", time: "Yesterday, 18:16",
-    status: "WIP", medium: "Acrylic", image: art[5], avatar: portraits[0],
-    caption: "Still finding the horizon. Version three, before I paint over the whole lower half.",
-    createdAt: Date.now() - 86400_000 },
-  { id: "p3", artist: "Inez L.", handle: "@inezlines", time: "Mon, 09:04",
-    status: "Finished", medium: "Mixed media", image: art[1], avatar: portraits[4],
-    caption: "A small record of weather moving through the room.",
-    createdAt: Date.now() - 172800_000 },
-];
+const seedPosts: Post[] = [];
 
 const BRUSH_COLORS = ["#2b211a", "#c2571f", "#7a8b5a", "#3b5b7a", "#8a5a7a", "#fffdf8"];
 const BRUSH_SIZES = [3, 8, 18, 36];
@@ -151,6 +139,7 @@ function Header({ section, user, onSignOut, navigate }: {
   navigate: (s: Section, screen: string, param?: string | number) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const isAdmin = user?.email && ADMIN_EMAILS.includes(user.email);
   return (
     <>
       <header className="header">
@@ -162,6 +151,9 @@ function Header({ section, user, onSignOut, navigate }: {
           <button className={section === "wall" ? "active" : ""} onClick={() => navigate("wall", "grid")}>The Wall</button>
           <button className={section === "studio" ? "active" : ""} onClick={() => navigate("studio", "feed")}>Studio</button>
           <button className={section === "arena" ? "active" : ""} onClick={() => navigate("arena", "lobby")}>Arena</button>
+          {isAdmin && (
+            <button className={section === "studio" && window.location.hash.includes("admin") ? "active" : ""} onClick={() => navigate("studio", "admin")}>Admin</button>
+          )}
         </nav>
         <div className="header__right">
           {user ? (
@@ -182,6 +174,9 @@ function Header({ section, user, onSignOut, navigate }: {
             <button onClick={() => { navigate("wall", "grid"); setMenuOpen(false); }}>The Wall</button>
             <button onClick={() => { navigate("studio", "feed"); setMenuOpen(false); }}>Studio</button>
             <button onClick={() => { navigate("arena", "lobby"); setMenuOpen(false); }}>Arena</button>
+            {isAdmin && (
+              <button onClick={() => { navigate("studio", "admin"); setMenuOpen(false); }}>Admin</button>
+            )}
             {user
               ? <button onClick={() => { onSignOut(); setMenuOpen(false); }}>Sign out</button>
               : <button onClick={() => { navigate("auth", "signin"); setMenuOpen(false); }}>Sign in</button>}
@@ -303,10 +298,7 @@ function InquiryModal({ work, onClose }: { work: Work; onClose: () => void }) {
       message
     );
     setBusy(false);
-    if (!ok) {
-      setError("Could not send. Try again.");
-      return;
-    }
+    if (!ok) { setError("Could not send. Try again."); return; }
     setSent(true);
   };
 
@@ -382,28 +374,9 @@ function ArtworkDetail({ id, navigate, artworks }: {
           <Button onClick={() => setShowInquiry(true)} disabled={!work.available}>
             {work.available ? "Inquire" : "Sold"} <Icon name="arrow" />
           </Button>
-          <Button variant="outline" onClick={() => navigate("studio", "room")}>
-            View artist's room
-          </Button>
         </div>
       </div>
       {showInquiry && <InquiryModal work={work} onClose={() => setShowInquiry(false)} />}
-    </main>
-  );
-}
-
-function ArtistsDirectory({ navigate }: { navigate: (s: Section, screen: string, param?: string | number) => void }) {
-  return (
-    <main className="page artists">
-      <div className="artists__intro"><span className="kicker">Artists</span><h1>Six voices.</h1></div>
-      <div className="artist-directory-grid">
-        {artistNames.map((name, i) => (
-          <button key={name} className="artist-card" onClick={() => navigate("studio", "room")}>
-            <img src={portraits[i]} alt={name} /><strong>{name}</strong>
-            <span>{["Painter · London", "Sculptor · Lisbon", "Mixed media · Berlin", "Printmaker · Oslo", "Textile · Marrakech", "Digital · Seoul"][i]}</span>
-          </button>
-        ))}
-      </div>
     </main>
   );
 }
@@ -433,16 +406,6 @@ function ArenaLobby({ navigate }: { navigate: (s: Section, screen: string, param
         <Button onClick={() => navigate("arena", "canvas")}>Enter the arena <Icon name="arrow" /></Button>
         <Button variant="outline" onClick={() => navigate("arena", "watch")}>Watch live</Button>
       </div>
-      <section className="waiting">
-        <div className="section-heading"><h2>Waiting now</h2><span>12 artists</span></div>
-        <div className="avatar-grid">
-          {portraits.map((portrait, index) => (
-            <article className="artist-chip" key={portrait}>
-              <img src={portrait} alt="" /><span>{artistNames[index]}</span><i />
-            </article>
-          ))}
-        </div>
-      </section>
     </main>
   );
 }
@@ -480,15 +443,8 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
 
   const handleSubmit = () => {
     if (!canvasRef.current || submitted) return;
-    if (!user) {
-      alert("Sign in first to submit your work.");
-      navigate("auth", "signin");
-      return;
-    }
-    if (realtime.phase !== "drawing" && realtime.phase !== "voting") {
-      alert("Wait for the drawing phase.");
-      return;
-    }
+    if (!user) { alert("Sign in first to submit your work."); navigate("auth", "signin"); return; }
+    if (realtime.phase !== "drawing" && realtime.phase !== "voting") { alert("Wait for the drawing phase."); return; }
     const strokes = canvasRef.current.getStrokes();
     const image = canvasRef.current.toDataURL();
     const name = user?.name || (user?.email ? user.email.split("@")[0] : "Guest");
@@ -510,21 +466,16 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
           <span className="live-dot" />
           {realtime.connected ? `Live · ${realtime.present.length} here` : "Connecting…"}
         </div>
-
         <div className="canvas-waiting">
           <span className="kicker">Battle {BATTLE_ID} · Waiting for artists</span>
           <h1>Ready when<br /><em>you are.</em></h1>
           <p>{realtime.present.length} in the room</p>
-
           {realtime.isHost ? (
-            <Button onClick={() => realtime.startPhase("countdown", 3)}>
-              Start the battle <Icon name="arrow" />
-            </Button>
+            <Button onClick={() => realtime.startPhase("countdown", 3)}>Start the battle <Icon name="arrow" /></Button>
           ) : (
             <p className="canvas-waiting__hint">Waiting for the host to start…</p>
           )}
         </div>
-
         <ArenaChat realtime={realtime} />
       </main>
     );
@@ -533,10 +484,7 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
   if (realtime.phase === "countdown") {
     return (
       <main className="prompt-screen">
-        <div className="prompt-screen__top">
-          <span>Tonight's prompt</span>
-          <span>Battle {BATTLE_ID}</span>
-        </div>
+        <div className="prompt-screen__top"><span>Tonight's prompt</span><span>Battle {BATTLE_ID}</span></div>
         <div className="prompt-screen__content">
           <span className="prompt-screen__count">{realtime.secondsLeft || 3}</span>
           <h1>{realtime.prompt}</h1>
@@ -549,11 +497,8 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
   if (realtime.phase === "voting" && !submitted) {
     return (
       <main className="page">
-        <StateBlock
-          kind="empty"
-          message="Time's up. Submissions are closed."
-          action={<Button onClick={() => navigate("arena", "voting")}>Go to voting <Icon name="arrow" /></Button>}
-        />
+        <StateBlock kind="empty" message="Time's up. Submissions are closed."
+          action={<Button onClick={() => navigate("arena", "voting")}>Go to voting <Icon name="arrow" /></Button>} />
       </main>
     );
   }
@@ -564,12 +509,10 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
         <span className="live-dot" />
         {realtime.connected ? `Live · ${realtime.present.length} here` : "Connecting…"}
       </div>
-
       <div className="canvas-timer">
         <span>{canDraw ? "Time remaining" : "Time up"}</span>
         <strong>{canDraw ? time : "00:00"}</strong>
       </div>
-
       <div className="canvas-stage">
         <LiveCanvas
           ref={canvasRef} color={color} size={size} mode={tool} locked={!canDraw}
@@ -577,7 +520,6 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
           remoteStrokes={remote} liveStrokesRef={liveRef}
         />
       </div>
-
       <div className="toolbar">
         <button className={`toolbar__btn ${tool === "brush" ? "selected" : ""}`} onClick={() => setTool("brush")}><Icon name="brush" /><span>Brush</span></button>
         <button className={`toolbar__btn ${tool === "eraser" ? "selected" : ""}`} onClick={() => setTool("eraser")}><Icon name="eraser" /><span>Eraser</span></button>
@@ -597,15 +539,9 @@ function CanvasView({ navigate, onSubmit, user, realtime }: {
         <button className="toolbar__btn" onClick={() => canvasRef.current?.undo()}><Icon name="redo" /><span>Undo</span></button>
         <button className="toolbar__btn" onClick={() => canvasRef.current?.clear()}><Icon name="trash" /><span>Clear</span></button>
       </div>
-
-      <Button
-        disabled={canDraw || submitted}
-        className="canvas-submit"
-        onClick={handleSubmit}
-      >
+      <Button disabled={canDraw || submitted} className="canvas-submit" onClick={handleSubmit}>
         {submitted ? "Submitted" : canDraw ? "Submit when time ends" : "Submit work"}
       </Button>
-
       <ArenaChat realtime={realtime} />
     </main>
   );
@@ -654,27 +590,20 @@ function SpectatorView({ navigate, realtime }: {
         {realtime.connected ? `Live · ${realtime.present.length} here` : "Connecting…"}
       </div>
       <div className="spectator-badge"><span className="live-dot" />Watching live</div>
-
       <div className="canvas-timer">
-        <span>
-          Battle {BATTLE_ID} · {realtime.phase === "drawing" ? "Time remaining" : realtime.phase}
-        </span>
+        <span>Battle {BATTLE_ID} · {realtime.phase === "drawing" ? "Time remaining" : realtime.phase}</span>
         <strong>{realtime.phase === "drawing" ? time : "—:—"}</strong>
       </div>
-
       <div className="canvas-stage">
         <canvas ref={canvasRef} width={1200} height={900} className="drawing-canvas drawing-canvas--watch" />
       </div>
-
       <div className="spectator-footer">
         <span>
-          {realtime.phase === "lobby"
-            ? "Waiting for the battle to start…"
-            : `${artists.length} artist${artists.length === 1 ? "" : "s"} in the room`}
+          {realtime.phase === "lobby" ? "Waiting for the battle to start…" :
+           `${artists.length} artist${artists.length === 1 ? "" : "s"} in the room`}
         </span>
         <Button variant="outline" onClick={() => navigate("arena", "lobby")}>Back to lobby <Icon name="arrow" /></Button>
       </div>
-
       <ArenaChat realtime={realtime} />
     </main>
   );
@@ -708,25 +637,17 @@ function Voting({ navigate, submissions, onVote, user }: {
         {battle.map((sub, index) => (
           <article className="vote-card" key={sub.id}>
             <div className="vote-card__image">
-              <img src={sub.image} alt={`Anonymous submission ${index + 1}`} />
+              <img src={sub.image} alt={`Submission ${index + 1}`} />
               <span>0{index + 1}</span>
             </div>
             <div className="vote-card__votes">{sub.votes} {sub.votes === 1 ? "vote" : "votes"}</div>
-            <Button
-              variant={picked === sub.id ? "primary" : "outline"}
-              disabled={!user}
-              onClick={() => setPicked(sub.id)}
-            >
+            <Button variant={picked === sub.id ? "primary" : "outline"} disabled={!user} onClick={() => setPicked(sub.id)}>
               {picked === sub.id ? "Vote selected" : "Vote for this work"}
             </Button>
           </article>
         ))}
       </div>
-      {picked && (
-        <Button className="confirm-vote" onClick={() => { onVote(picked); navigate("arena", "results"); }}>
-          Confirm vote <Icon name="arrow" />
-        </Button>
-      )}
+      {picked && <Button className="confirm-vote" onClick={() => { onVote(picked); navigate("arena", "results"); }}>Confirm vote <Icon name="arrow" /></Button>}
     </main>
   );
 }
@@ -761,7 +682,6 @@ function Results({ navigate, submissions }: {
       </div>
       <div className="results__footer">
         <p>Winner by {winner.votes} {winner.votes === 1 ? "vote" : "votes"}.</p>
-        <Button variant="outline" onClick={() => navigate("studio", "room")}>Visit {winner.artistName}'s artist room <Icon name="arrow" /></Button>
       </div>
     </main>
   );
@@ -815,10 +735,11 @@ function StudioFeed({ posts, user, savedIds, toggleSaved, loading }: {
   );
 }
 
-function Composer({ user, navigate, onListed }: {
+function Composer({ user, navigate, onListed, myArtist }: {
   user: User | null;
   navigate: (s: Section, screen: string, param?: string | number) => void;
   onListed: (art: Artwork) => void;
+  myArtist: Artist | null;
 }) {
   const [title, setTitle] = useState("");
   const [medium, setMedium] = useState("");
@@ -834,6 +755,27 @@ function Composer({ user, navigate, onListed }: {
       <main className="page">
         <StateBlock kind="empty" message="Sign in to list a work."
           action={<Button variant="outline" onClick={() => navigate("auth", "signin")}>Sign in</Button>} />
+      </main>
+    );
+  }
+
+  if (!myArtist || myArtist.status !== "approved") {
+    return (
+      <main className="page">
+        <div className="artists__intro">
+          <span className="kicker">Listing</span>
+          <h1>{myArtist ? "Pending approval." : "Become an artist."}</h1>
+        </div>
+        <div className="apply-status apply-status--pending">
+          {myArtist
+            ? "Your application is under review. You'll be able to list work once approved."
+            : "To list work on the Wall, apply to join the collective first."}
+        </div>
+        <div style={{ marginTop: "1.5rem" }}>
+          <Button onClick={() => navigate("studio", "apply")}>
+            {myArtist ? "View application" : "Apply now"} <Icon name="arrow" />
+          </Button>
+        </div>
       </main>
     );
   }
@@ -861,7 +803,7 @@ function Composer({ user, navigate, onListed }: {
     setError(null);
     const result = await saveArtwork(
       {
-        artistName: user.name || user.email.split("@")[0],
+        artistName: myArtist.name,
         title: title.trim(),
         image: "",
         medium: medium.trim(),
@@ -873,10 +815,7 @@ function Composer({ user, navigate, onListed }: {
       image
     );
     setBusy(false);
-    if (!result) {
-      setError("Could not list the work. Try again.");
-      return;
-    }
+    if (!result) { setError("Could not list the work. Try again."); return; }
     onListed(result);
     navigate("wall", "grid");
   };
@@ -900,145 +839,18 @@ function Composer({ user, navigate, onListed }: {
           )}
         </section>
         <section className="composer-form">
-          <label>Title
-            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Salt marsh study" />
-          </label>
-          <label>Medium
-            <input value={medium} onChange={(e) => setMedium(e.target.value)} placeholder="e.g. Oil on linen" />
-          </label>
-          <label>Dimensions
-            <input value={dimensions} onChange={(e) => setDimensions(e.target.value)} placeholder="e.g. 60 × 80 cm" />
-          </label>
-          <label>Year
-            <input type="number" value={year} onChange={(e) => setYear(parseInt(e.target.value, 10) || new Date().getFullYear())} />
-          </label>
-          <label>Price (€)
-            <input type="number" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="e.g. 850" />
-          </label>
-
+          <label>Title<input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Salt marsh study" /></label>
+          <label>Medium<input value={medium} onChange={(e) => setMedium(e.target.value)} placeholder="e.g. Oil on linen" /></label>
+          <label>Dimensions<input value={dimensions} onChange={(e) => setDimensions(e.target.value)} placeholder="e.g. 60 × 80 cm" /></label>
+          <label>Year<input type="number" value={year} onChange={(e) => setYear(parseInt(e.target.value, 10) || new Date().getFullYear())} /></label>
+          <label>Price (€)<input type="number" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="e.g. 850" /></label>
           {error && <p className="auth__error">{error}</p>}
-
           <div className="composer-form__footer">
             <span>Will appear on The Wall immediately.</span>
-            <Button onClick={handleList} disabled={busy}>
-              {busy ? "Listing…" : "List work"} <Icon name="arrow" />
-            </Button>
+            <Button onClick={handleList} disabled={busy}>{busy ? "Listing…" : "List work"} <Icon name="arrow" /></Button>
           </div>
         </section>
       </div>
-    </main>
-  );
-}
-
-function ArtistRoom({ user }: { user: User | null }) {
-  const [tab, setTab] = useState<"works" | "process" | "inbox">("process");
-  const [inquiries, setInquiries] = useState<Inquiry[]>([]);
-  const [loadingInbox, setLoadingInbox] = useState(false);
-
-  const ARTIST_NAME = "June Ori";
-
-  useEffect(() => {
-    if (tab !== "inbox") return;
-    if (!user) return;
-    setLoadingInbox(true);
-    loadInquiriesForArtist(ARTIST_NAME).then((rows) => {
-      setInquiries(rows);
-      setLoadingInbox(false);
-    });
-  }, [tab, user]);
-
-  return (
-    <main className="room page">
-      <div className="room__profile">
-        <img src={portraits[2]} alt="June Ori" />
-        <div>
-          <span className="kicker">Artist room · London</span>
-          <h1>June Ori</h1>
-          <p>Painter working between memory, imagined architecture, and the color of early mornings.</p>
-        </div>
-        <Button variant="outline">Visit website <Icon name="arrow" /></Button>
-      </div>
-
-      <nav className="room-tabs">
-        <button className={tab === "works" ? "active" : ""} onClick={() => setTab("works")}>Works</button>
-        <button className={tab === "process" ? "active" : ""} onClick={() => setTab("process")}>
-          Process <span>08</span>
-        </button>
-        <button className={tab === "inbox" ? "active" : ""} onClick={() => setTab("inbox")}>
-          Inbox {inquiries.length > 0 && <span>{inquiries.length}</span>}
-        </button>
-      </nav>
-
-      {tab === "process" && (
-        <>
-          <div className="process-intro">
-            <h2>Process</h2>
-            <p>Studies, false starts, and works still becoming.</p>
-          </div>
-          <div className="process-grid">
-            {art.slice(0, 6).map((image, index) => (
-              <article key={image}>
-                <img src={image} alt={`Work in progress ${index + 1}`} />
-                <div>
-                  <span>WIP · {["Oil on linen", "Graphite", "Mixed media"][index % 3]}</span>
-                  <strong>{["Before the city", "North room study", "A softer boundary", "Blue hour no. 4", "Weather drawing", "Notes on leaving"][index]}</strong>
-                </div>
-              </article>
-            ))}
-          </div>
-        </>
-      )}
-
-      {tab === "works" && (
-        <div className="process-grid">
-          {art.map((image, index) => (
-            <article key={image}>
-              <img src={image} alt={`Work ${index + 1}`} />
-              <div>
-                <span>Available</span>
-                <strong>{["Salt marsh study", "North room", "Before the city", "Blue hour no. 4", "Weather drawing", "Notes on leaving", "A softer boundary", "Interval"][index]}</strong>
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
-
-      {tab === "inbox" && (
-        <>
-          {!user && (
-            <StateBlock kind="empty" message="Sign in as the artist to see inquiries." />
-          )}
-          {user && loadingInbox && <StateBlock kind="loading" message="Loading inbox…" />}
-          {user && !loadingInbox && inquiries.length === 0 && (
-            <StateBlock kind="empty" message="No inquiries yet." />
-          )}
-          {user && !loadingInbox && inquiries.length > 0 && (
-            <div className="inbox">
-              {inquiries.map((inq) => (
-                <article className="inbox__item" key={inq.id}>
-                  <header className="inbox__head">
-                    <div>
-                      <strong>{inq.buyerName || inq.name}</strong>
-                      <span>{inq.buyerEmail || inq.email}</span>
-                    </div>
-                    <span className="inbox__date">{new Date(inq.createdAt).toLocaleDateString()}</span>
-                  </header>
-                  <div className="inbox__work">
-                    <span className="kicker">About</span>
-                    <strong>{inq.workTitle}</strong>
-                  </div>
-                  <p className="inbox__msg">{inq.message}</p>
-                  <div className="inbox__actions">
-                    <a href={`mailto:${inq.buyerEmail || inq.email}?subject=Re: ${inq.workTitle}`}>
-                      <Button variant="outline">Reply by email <Icon name="arrow" /></Button>
-                    </a>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </>
-      )}
     </main>
   );
 }
@@ -1077,10 +889,7 @@ function AuthPage({ mode, navigate, onSignedIn }: {
         <div className="auth__card">
           <span className="kicker">Check your email</span>
           <h1>Link sent</h1>
-          <p className="auth__info">
-            We sent a sign-in link to <strong>{email}</strong>.
-            Open it from the same browser and you'll be logged in.
-          </p>
+          <p className="auth__info">We sent a sign-in link to <strong>{email}</strong>.</p>
           <Button variant="outline" onClick={() => setSent(false)}>Use a different email</Button>
         </div>
       </main>
@@ -1093,16 +902,10 @@ function AuthPage({ mode, navigate, onSignedIn }: {
         <span className="kicker">{isSignin ? "Welcome back" : "Join the collective"}</span>
         <h1>{isSignin ? "Sign in" : "Create account"}</h1>
         <form onSubmit={handleSubmit}>
-          {!isSignin && (
-            <label>Name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Optional" /></label>
-          )}
-          <label>Email
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
-          </label>
+          {!isSignin && <label>Name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Optional" /></label>}
+          <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus /></label>
           {error && <p className="auth__error">{error}</p>}
-          <Button type="submit" disabled={busy || !email}>
-            {busy ? "Sending…" : "Send sign-in link"} <Icon name="arrow" />
-          </Button>
+          <Button type="submit" disabled={busy || !email}>{busy ? "Sending…" : "Send sign-in link"} <Icon name="arrow" /></Button>
         </form>
         <button className="auth__switch" onClick={() => navigate("auth", isSignin ? "signup" : "signin")}>
           {isSignin ? "No account? Sign up" : "Already have an account? Sign in"}
@@ -1124,16 +927,27 @@ export default function App() {
   const [artworks, setArtworks] = useState<Artwork[]>([]);
   const [artworksLoading, setArtworksLoading] = useState(true);
   const [savedIds, setSavedIds] = useState<string[]>([]);
+  const [myArtist, setMyArtist] = useState<Artist | null>(null);
 
   useEffect(() => {
     const unsubscribe = onAuthChange((u) => setUser(u));
     return unsubscribe;
   }, []);
 
+  /* when user changes, load their artist profile */
   useEffect(() => {
-    loadSubmissions(BATTLE_ID).then(setSubmissions);
-  }, []);
+    if (!user?.email) { setMyArtist(null); return; }
+    import("./lib/supabase").then(({ supabase }) => {
+      if (!supabase) return;
+      supabase.auth.getUser().then(({ data }) => {
+        const uid = data.user?.id;
+        if (!uid) return;
+        loadMyArtist(uid).then(setMyArtist);
+      });
+    });
+  }, [user]);
 
+  useEffect(() => { loadSubmissions(BATTLE_ID).then(setSubmissions); }, []);
   useEffect(() => {
     setPostsLoading(true);
     loadPosts().then((rows) => {
@@ -1141,13 +955,9 @@ export default function App() {
       setPostsLoading(false);
     });
   }, []);
-
   useEffect(() => {
     setArtworksLoading(true);
-    loadArtworks().then((rows) => {
-      setArtworks(rows);
-      setArtworksLoading(false);
-    });
+    loadArtworks().then((rows) => { setArtworks(rows); setArtworksLoading(false); });
   }, []);
 
   const [lastMsg, setLastMsg] = useState<RoomMessage | null>(null);
@@ -1180,9 +990,7 @@ export default function App() {
         prev.some((s) => s.id === lastMsg.submission.id) ? prev : [...prev, lastMsg.submission as Submission]
       );
     } else if (lastMsg.type === "vote") {
-      setSubmissions((prev) =>
-        prev.map((s) => (s.id === lastMsg.submissionId ? { ...s, votes: s.votes + 1 } : s))
-      );
+      setSubmissions((prev) => prev.map((s) => (s.id === lastMsg.submissionId ? { ...s, votes: s.votes + 1 } : s)));
     }
   }, [lastMsg]);
 
@@ -1212,15 +1020,19 @@ export default function App() {
   const wallScreen: WallScreen =
     screen === "detail" ? "detail" : screen === "artists" ? "artists" : "grid";
 
+  const isRoom = screen.startsWith("room/");
+  const roomId = isRoom ? screen.slice(5) : "";
+
+  const isKnown =
+    (section === "wall" && (wallScreen === "grid" || wallScreen === "detail" || wallScreen === "artists")) ||
+    (section === "arena" && (screen === "lobby" || screen === "canvas" || screen === "watch" || screen === "voting" || screen === "results")) ||
+    (section === "studio" && (screen === "feed" || screen === "composer" || screen === "apply" || screen === "admin" || isRoom)) ||
+    section === "auth";
+
   return (
     <div className={`app ${immersive ? "app--immersive" : ""}`}>
       {!immersive && (
-        <Header
-          section={section}
-          user={user}
-          onSignOut={() => { authSignOut(); setUser(null); }}
-          navigate={navigate}
-        />
+        <Header section={section} user={user} onSignOut={() => { authSignOut(); setUser(null); }} navigate={navigate} />
       )}
 
       {!immersive && section === "wall" && (
@@ -1235,9 +1047,9 @@ export default function App() {
           items={[
             { id: "feed" as StudioScreen, label: "Feed" },
             { id: "composer" as StudioScreen, label: "List a work" },
-            { id: "room" as StudioScreen, label: "Artist room" },
+            { id: "apply" as StudioScreen, label: "My artist profile" },
           ]}
-          active={screen as StudioScreen}
+          active={(screen === "apply" ? "apply" : "feed") as StudioScreen}
           setActive={(id) => navigate("studio", id)}
         />
       )}
@@ -1261,7 +1073,7 @@ export default function App() {
       {section === "wall" && wallScreen === "detail" && (
         <ArtworkDetail id={param} navigate={navigate} artworks={artworks} />
       )}
-      {section === "wall" && wallScreen === "artists" && <ArtistsDirectory navigate={navigate} />}
+      {section === "wall" && wallScreen === "artists" && <ArtistDirectory navigate={navigate} />}
 
       {section === "arena" && screen === "lobby" && <ArenaLobby navigate={navigate} />}
       {section === "arena" && screen === "canvas" && (
@@ -1276,29 +1088,39 @@ export default function App() {
       )}
 
       {section === "studio" && screen === "feed" && (
-        <StudioFeed
-          posts={posts}
-          user={user}
-          savedIds={savedIds}
-          toggleSaved={toggleSaved}
-          loading={postsLoading}
-        />
+        <StudioFeed posts={posts} user={user} savedIds={savedIds} toggleSaved={toggleSaved} loading={postsLoading} />
       )}
       {section === "studio" && screen === "composer" && (
         <Composer
           user={user}
           navigate={navigate}
           onListed={(a) => setArtworks((prev) => [a, ...prev])}
+          myArtist={myArtist}
         />
       )}
-      {section === "studio" && screen === "room" && <ArtistRoom user={user} />}
+      {section === "studio" && screen === "apply" && (
+        <ArtistApply user={user} navigate={navigate} />
+      )}
+      {section === "studio" && screen === "admin" && (
+        <AdminPanel user={user} />
+      )}
+      {section === "studio" && isRoom && (
+        <ArtistRoom artistId={roomId} user={user} navigate={navigate} />
+      )}
 
       {section === "auth" && (
-        <AuthPage
-          mode={(screen as AuthScreen) || "signin"}
-          navigate={navigate}
-          onSignedIn={() => {}}
-        />
+        <AuthPage mode={(screen as AuthScreen) || "signin"} navigate={navigate} onSignedIn={() => {}} />
+      )}
+
+      {!isKnown && (
+        <main className="page">
+          <div className="notfound">
+            <span className="kicker">404</span>
+            <h1>Nothing here.</h1>
+            <p>The page you're looking for doesn't exist.</p>
+            <button className="button" onClick={() => navigate("wall", "grid")}>Back to the Wall</button>
+          </div>
+        </main>
       )}
     </div>
   );
