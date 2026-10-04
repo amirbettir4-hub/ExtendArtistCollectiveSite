@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import {
   loadArtists, loadArtistById, loadArtworksByUser,
   saveArtistProfile, loadPendingArtists, setArtistStatus,
+  deleteArtwork,
   type Artist, type Artwork,
 } from "../lib/db";
 import type { User } from "../store";
 
 /* =========================================================
-   Small shared bits
+   Shared
 ========================================================= */
 
 function StateBlock({ kind, message }: {
@@ -21,15 +22,13 @@ function StateBlock({ kind, message }: {
   );
 }
 
+type Nav = (s: "wall" | "studio" | "arena" | "auth", screen: string, param?: string) => void;
+
 /* =========================================================
    ARTIST DIRECTORY
 ========================================================= */
 
-export function ArtistDirectory({
-  navigate,
-}: {
-  navigate: (s: "wall" | "studio" | "arena" | "auth", screen: string, param?: string) => void;
-}) {
+export function ArtistDirectory({ navigate }: { navigate: Nav }) {
   const [artists, setArtists] = useState<Artist[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -85,25 +84,30 @@ export function ArtistDirectory({
 export function ArtistRoom({
   artistId,
   user,
+  myArtist,
   navigate,
 }: {
   artistId: string;
   user: User | null;
-  navigate: (s: "wall" | "studio" | "arena" | "auth", screen: string, param?: string) => void;
+  myArtist: Artist | null;
+  navigate: Nav;
 }) {
   const [artist, setArtist] = useState<Artist | null>(null);
   const [works, setWorks] = useState<Artwork[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"works" | "about">("works");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const reload = async (a: Artist) => {
+    const w = await loadArtworksByUser(a.userId);
+    setWorks(w);
+  };
 
   useEffect(() => {
     setLoading(true);
     loadArtistById(artistId).then(async (a) => {
       setArtist(a);
-      if (a) {
-        const w = await loadArtworksByUser(a.userId);
-        setWorks(w);
-      }
+      if (a) await reload(a);
       setLoading(false);
     });
   }, [artistId]);
@@ -125,11 +129,20 @@ export function ArtistRoom({
     );
   }
 
-  const isMine = user?.email && user.email === artist.userId;
-  const isOwner =
-    user &&
-    (user.email === artist.userId ||
-      user.email.split("@")[0] === artist.name);
+  const isMine = myArtist?.id === artist.id;
+  void user;
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this work? This can't be undone.")) return;
+    setDeletingId(id);
+    const ok = await deleteArtwork(id);
+    setDeletingId(null);
+    if (ok) {
+      setWorks((prev) => prev.filter((w) => w.id !== id));
+    } else {
+      alert("Could not delete. Try again.");
+    }
+  };
 
   return (
     <main className="room page">
@@ -143,7 +156,10 @@ export function ArtistRoom({
         )}
         <div>
           <span className="kicker">
-            Artist room{[artist.location, artist.medium].filter(Boolean).length > 0 ? ` · ${[artist.medium, artist.location].filter(Boolean).join(" · ")}` : ""}
+            Artist room
+            {[artist.medium, artist.location].filter(Boolean).length > 0
+              ? ` · ${[artist.medium, artist.location].filter(Boolean).join(" · ")}`
+              : ""}
           </span>
           <h1>{artist.name}</h1>
           <p>{artist.bio || "No bio yet."}</p>
@@ -167,18 +183,38 @@ export function ArtistRoom({
       {tab === "works" && (
         <>
           {works.length === 0 ? (
-            <StateBlock kind="empty" message="No works listed yet." />
+            <StateBlock kind="empty" message={isMine ? "You haven't listed any works yet." : "No works listed yet."} />
           ) : (
             <div className="process-grid">
               {works.map((w) => (
                 <article key={w.id}>
                   <img src={w.image} alt={w.title} />
-                  <div>
-                    <span>{w.medium}</span>
-                    <strong>{w.title}</strong>
+                  <div className="room-work__meta">
+                    <div>
+                      <span>{w.medium}</span>
+                      <strong>{w.title}</strong>
+                    </div>
+                    {isMine && (
+                      <button
+                        className="room-work__delete"
+                        onClick={() => handleDelete(w.id)}
+                        disabled={deletingId === w.id}
+                        aria-label={`Delete ${w.title}`}
+                      >
+                        {deletingId === w.id ? "…" : "Delete"}
+                      </button>
+                    )}
                   </div>
                 </article>
               ))}
+            </div>
+          )}
+
+          {isMine && works.length === 0 && (
+            <div style={{ marginTop: "1.5rem" }}>
+              <button className="button" onClick={() => navigate("studio", "composer")}>
+                List a work
+              </button>
             </div>
           )}
         </>
@@ -204,7 +240,7 @@ export function ArtistRoom({
         </div>
       )}
 
-      {isOwner && (
+      {isMine && (
         <div style={{ marginTop: "2rem" }}>
           <button className="button button--outline" onClick={() => navigate("studio", "apply")}>
             Edit my profile
@@ -224,7 +260,7 @@ export function ArtistApply({
   navigate,
 }: {
   user: User | null;
-  navigate: (s: "wall" | "studio" | "arena" | "auth", screen: string, param?: string) => void;
+  navigate: Nav;
 }) {
   const [existing, setExisting] = useState<Artist | null>(null);
   const [name, setName] = useState("");
@@ -239,7 +275,6 @@ export function ArtistApply({
 
   useEffect(() => {
     if (!user?.email) return;
-    /* find the user's id by hitting loadMyArtist with email — we use email as a proxy through the DB directly */
     import("../lib/supabase").then(({ supabase }) => {
       if (!supabase) return;
       supabase.auth.getUser().then(({ data }) => {
@@ -309,7 +344,6 @@ export function ArtistApply({
     const result = await saveArtistProfile(uid, profile, avatarDataUrl);
     setBusy(false);
     if (!result) { setError("Could not save. Try again."); return; }
-    navigate("studio", "apply");
     setExisting(result);
   };
 
@@ -324,9 +358,7 @@ export function ArtistApply({
   return (
     <main className="composer page">
       <div className="composer__heading">
-        <span className="kicker">
-          {existing ? "Artist profile" : "Apply to join"}
-        </span>
+        <span className="kicker">{existing ? "Artist profile" : "Apply to join"}</span>
         <h1>
           {isApproved ? "Your artist profile." :
            isPending ? "Application under review." :
@@ -343,7 +375,7 @@ export function ArtistApply({
 
       {isApproved && (
         <div className="apply-status apply-status--approved">
-          You're approved. Your work will show on The Wall.
+          You're approved. Your work shows on The Wall and in your room.
         </div>
       )}
 
@@ -369,21 +401,11 @@ export function ArtistApply({
         </section>
 
         <section className="composer-form">
-          <label>Name
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your artist name" />
-          </label>
-          <label>Location
-            <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. London" />
-          </label>
-          <label>Medium
-            <input value={medium} onChange={(e) => setMedium(e.target.value)} placeholder="e.g. Oil on linen" />
-          </label>
-          <label>Website
-            <input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://…" />
-          </label>
-          <label>Bio
-            <textarea rows={5} value={bio} onChange={(e) => setBio(e.target.value)} placeholder="Two sentences about your work." />
-          </label>
+          <label>Name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your artist name" /></label>
+          <label>Location<input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. London" /></label>
+          <label>Medium<input value={medium} onChange={(e) => setMedium(e.target.value)} placeholder="e.g. Oil on linen" /></label>
+          <label>Website<input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://…" /></label>
+          <label>Bio<textarea rows={5} value={bio} onChange={(e) => setBio(e.target.value)} placeholder="Two sentences about your work." /></label>
 
           {error && <p className="auth__error">{error}</p>}
 

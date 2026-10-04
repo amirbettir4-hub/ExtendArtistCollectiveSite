@@ -25,26 +25,19 @@ export async function loadSubmissions(battleId: number): Promise<Submission[]> {
     .select("*")
     .eq("battle_id", battleId)
     .order("created_at", { ascending: true });
-  if (error || !data) {
-    console.error("loadSubmissions:", error);
-    return [];
-  }
+  if (error || !data) return [];
   return data.map(rowToSubmission);
 }
 
-async function uploadArtwork(dataUrl: string, submissionId: string): Promise<string | null> {
+async function uploadArenaArt(dataUrl: string, submissionId: string): Promise<string | null> {
   if (!supabase) return null;
   const blob = await (await fetch(dataUrl)).blob();
   const path = `${submissionId}.png`;
   const { error } = await supabase.storage
     .from("arena-art")
     .upload(path, blob, { contentType: "image/png", upsert: true });
-  if (error) {
-    console.error("uploadArtwork:", error);
-    return null;
-  }
-  const { data } = supabase.storage.from("arena-art").getPublicUrl(path);
-  return data.publicUrl;
+  if (error) return null;
+  return supabase.storage.from("arena-art").getPublicUrl(path).data.publicUrl;
 }
 
 export async function saveSubmission(sub: Submission): Promise<boolean> {
@@ -53,7 +46,7 @@ export async function saveSubmission(sub: Submission): Promise<boolean> {
   const userId = userData.user?.id;
   if (!userId) return false;
 
-  const url = await uploadArtwork(sub.image, sub.id);
+  const url = await uploadArenaArt(sub.image, sub.id);
   if (!url) return false;
 
   const { error } = await supabase.from("submissions").insert({
@@ -66,11 +59,7 @@ export async function saveSubmission(sub: Submission): Promise<boolean> {
     strokes: sub.strokes,
     prompt: sub.prompt,
   });
-  if (error) {
-    console.error("saveSubmission:", error);
-    return false;
-  }
-  return true;
+  return !error;
 }
 
 export async function castVote(submissionId: string): Promise<boolean> {
@@ -83,10 +72,7 @@ export async function castVote(submissionId: string): Promise<boolean> {
     submission_id: submissionId,
     user_id: userId,
   });
-  if (error && error.code !== "23505") {
-    console.error("castVote:", error);
-    return false;
-  }
+  if (error && error.code !== "23505") return false;
   return true;
 }
 
@@ -143,11 +129,23 @@ export async function loadPosts(): Promise<Post[]> {
   }));
 }
 
-export async function savePost(post: Post): Promise<boolean> {
+export async function savePost(post: Post, imageDataUrl?: string): Promise<boolean> {
   if (!supabase) return false;
   const { data: userData } = await supabase.auth.getUser();
   const userId = userData.user?.id;
   if (!userId) return false;
+
+  let imageUrl = post.image;
+
+  if (imageDataUrl && imageDataUrl.startsWith("data:")) {
+    const blob = await (await fetch(imageDataUrl)).blob();
+    const path = `${post.id}.png`;
+    const { error: upErr } = await supabase.storage
+      .from("studio-art")
+      .upload(path, blob, { contentType: "image/png", upsert: true });
+    if (upErr) return false;
+    imageUrl = supabase.storage.from("studio-art").getPublicUrl(path).data.publicUrl;
+  }
 
   const { error } = await supabase.from("posts").insert({
     id: post.id,
@@ -155,7 +153,7 @@ export async function savePost(post: Post): Promise<boolean> {
     artist_name: post.artist,
     handle: post.handle,
     avatar_url: post.avatar,
-    image_url: post.image,
+    image_url: imageUrl,
     status: post.status,
     medium: post.medium,
     caption: post.caption,
@@ -240,7 +238,7 @@ export async function loadInquiriesForArtist(artistName: string): Promise<Inquir
 }
 
 /* =========================================================
-   ARTWORKS (The Wall)
+   ARTWORKS
 ========================================================= */
 
 export type Artwork = {
@@ -329,6 +327,12 @@ export async function saveArtwork(
 
   if (error || !data) return null;
   return rowToArtwork(data);
+}
+
+export async function deleteArtwork(id: string): Promise<boolean> {
+  if (!supabase) return false;
+  const { error } = await supabase.from("artworks").delete().eq("id", id);
+  return !error;
 }
 
 function rowToArtwork(row: ArtworkRow): Artwork {
@@ -425,9 +429,7 @@ export async function saveArtistProfile(
     const { error: upErr } = await supabase.storage
       .from("artist-avatars")
       .upload(path, blob, { contentType: "image/png", upsert: true });
-    if (upErr) {
-      console.error("avatar upload:", upErr);
-    } else {
+    if (!upErr) {
       avatarUrl = supabase.storage.from("artist-avatars").getPublicUrl(path).data.publicUrl;
     }
   }
@@ -435,7 +437,6 @@ export async function saveArtistProfile(
   const existing = await loadMyArtist(userId);
 
   if (existing) {
-    /* update */
     const { data, error } = await supabase
       .from("artists")
       .update({
@@ -451,25 +452,24 @@ export async function saveArtistProfile(
       .single();
     if (error || !data) return null;
     return rowToArtist(data);
-  } else {
-    /* insert */
-    const { data, error } = await supabase
-      .from("artists")
-      .insert({
-        user_id: userId,
-        name: profile.name,
-        location: profile.location,
-        medium: profile.medium,
-        bio: profile.bio,
-        website: profile.website,
-        avatar_url: avatarUrl,
-        status: "pending",
-      })
-      .select()
-      .single();
-    if (error || !data) return null;
-    return rowToArtist(data);
   }
+
+  const { data, error } = await supabase
+    .from("artists")
+    .insert({
+      user_id: userId,
+      name: profile.name,
+      location: profile.location,
+      medium: profile.medium,
+      bio: profile.bio,
+      website: profile.website,
+      avatar_url: avatarUrl,
+      status: "pending",
+    })
+    .select()
+    .single();
+  if (error || !data) return null;
+  return rowToArtist(data);
 }
 
 export async function loadPendingArtists(): Promise<Artist[]> {

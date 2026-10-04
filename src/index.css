@@ -852,6 +852,16 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
 }
 .post > p { margin: 0; font-family: var(--serif); font-size: 1.08rem; line-height: 1.5; }
 
+.post__avatar-fallback {
+  width: 2.8rem; height: 2.8rem;
+  border-radius: 50%;
+  background: var(--terracotta);
+  color: var(--paper);
+  display: grid; place-items: center;
+  font-family: var(--serif);
+  font-size: 1.1rem;
+}
+
 /* =========================================================
    STUDIO COMPOSER
 ========================================================= */
@@ -971,9 +981,43 @@ em { color: var(--terracotta); font-weight: 400; font-style: italic; }
 .process-grid span { color: var(--terracotta); font-size: 0.55rem; letter-spacing: 0.08em; text-transform: uppercase; }
 .process-grid strong { margin-top: var(--space-1); font-family: var(--serif); font-size: 1.1rem; font-weight: 400; }
 
-/* =========================================================
-   ARTIST ROOM — about tab
-========================================================= */
+/* Room work — delete + meta */
+.room-work__meta {
+  padding-top: var(--space-3);
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: var(--space-3);
+}
+.room-work__meta span,
+.room-work__meta strong { display: block; }
+.room-work__meta span {
+  color: var(--terracotta);
+  font-size: 0.55rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.room-work__meta strong {
+  margin-top: var(--space-1);
+  font-family: var(--serif);
+  font-size: 1.1rem;
+  font-weight: 400;
+}
+.room-work__delete {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  padding: 0.3rem 0.6rem;
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  flex: none;
+}
+.room-work__delete:hover { border-color: #b3261e; color: #b3261e; }
+.room-work__delete:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Artist room — about tab */
 .room-about {
   margin-top: var(--space-5);
 }

@@ -23,7 +23,7 @@ import { signInWithMagicLink, signOut as authSignOut, onAuthChange } from "./lib
 /* ============ TYPES ============ */
 type Section = "wall" | "studio" | "arena" | "auth";
 type ArenaScreen = "lobby" | "canvas" | "watch" | "voting" | "results";
-type StudioScreen = "feed" | "composer" | "room" | "apply" | "admin" | `room/${string}`;
+type StudioScreen = "feed" | "post" | "composer" | "apply" | "admin" | "room";
 type WallScreen = "grid" | "detail" | "artists";
 type AuthScreen = "signin" | "signup";
 type Tool = "brush" | "eraser";
@@ -47,19 +47,8 @@ export type Realtime = {
 
 /* ============ DATA ============ */
 const BATTLE_ID = 47;
-const BATTLE_PROMPT = "Draw the place you go to disappear.";
 const ADMIN_EMAILS = ["amirbettir4@gmail.com"];
 
-const art = [
-  "https://images.unsplash.com/photo-1533208087231-c3618eab623c?auto=format&fit=crop&w=1200&q=85",
-  "https://images.unsplash.com/photo-1618331835717-801e976710b2?auto=format&fit=crop&w=1200&q=85",
-  "https://images.unsplash.com/photo-1552312097-8ef75595e2a2?auto=format&fit=crop&w=1200&q=85",
-  "https://images.unsplash.com/photo-1532640331846-d2da5987c3ee?auto=format&fit=crop&w=1200&q=85",
-  "https://images.unsplash.com/photo-1531056416665-266c4099c928?auto=format&fit=crop&w=1200&q=85",
-  "https://images.unsplash.com/photo-1534946445127-9e89ef27bc15?auto=format&fit=crop&w=1200&q=85",
-  "https://images.unsplash.com/photo-1551619276-f77b2c749711?auto=format&fit=crop&w=1200&q=85",
-  "https://images.unsplash.com/photo-1531132076534-0120b6aa12cd?auto=format&fit=crop&w=1200&q=85",
-];
 const portraits = [
   "https://images.unsplash.com/photo-1628359355624-855775b5c9c4?auto=format&fit=crop&w=320&q=80",
   "https://images.unsplash.com/photo-1650783756107-739513b38177?auto=format&fit=crop&w=320&q=80",
@@ -68,9 +57,6 @@ const portraits = [
   "https://images.unsplash.com/photo-1619107187499-adbfd254e9ee?auto=format&fit=crop&w=320&q=80",
   "https://images.unsplash.com/photo-1626555019243-638888e7dc3a?auto=format&fit=crop&w=320&q=80",
 ];
-const artistNames = ["Theo K.", "Mara Vale", "June Ori", "Sam Dune", "Inez L.", "K. Moss"];
-
-const seedPosts: Post[] = [];
 
 const BRUSH_COLORS = ["#2b211a", "#c2571f", "#7a8b5a", "#3b5b7a", "#8a5a7a", "#fffdf8"];
 const BRUSH_SIZES = [3, 8, 18, 36];
@@ -127,7 +113,7 @@ function useHashRoute() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   const navigate = (section: Section, screen: string, param?: string | number) => {
-    window.location.hash = `#/${section}/${screen}${param !== undefined ? `/${param}` : ""}`;
+    window.location.hash = `#/${section}/${screen}${param !== undefined && param !== "" ? `/${param}` : ""}`;
     window.scrollTo(0, 0);
   };
   return { route, navigate };
@@ -139,7 +125,8 @@ function Header({ section, user, onSignOut, navigate }: {
   navigate: (s: Section, screen: string, param?: string | number) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const isAdmin = user?.email && ADMIN_EMAILS.includes(user.email);
+  const isAdmin = !!user?.email && ADMIN_EMAILS.includes(user.email);
+  const hash = typeof window !== "undefined" ? window.location.hash : "";
   return (
     <>
       <header className="header">
@@ -152,7 +139,9 @@ function Header({ section, user, onSignOut, navigate }: {
           <button className={section === "studio" ? "active" : ""} onClick={() => navigate("studio", "feed")}>Studio</button>
           <button className={section === "arena" ? "active" : ""} onClick={() => navigate("arena", "lobby")}>Arena</button>
           {isAdmin && (
-            <button className={section === "studio" && window.location.hash.includes("admin") ? "active" : ""} onClick={() => navigate("studio", "admin")}>Admin</button>
+            <button className={hash.includes("/studio/admin") ? "active" : ""} onClick={() => navigate("studio", "admin")}>
+              Admin
+            </button>
           )}
         </nav>
         <div className="header__right">
@@ -337,10 +326,11 @@ function InquiryModal({ work, onClose }: { work: Work; onClose: () => void }) {
   );
 }
 
-function ArtworkDetail({ id, navigate, artworks }: {
+function ArtworkDetail({ id, navigate, artworks, artists }: {
   id: string;
   navigate: (s: Section, screen: string, param?: string | number) => void;
   artworks: Work[];
+  artists: Artist[];
 }) {
   const [showInquiry, setShowInquiry] = useState(false);
   const work = artworks.find((w) => w.id === id);
@@ -353,6 +343,8 @@ function ArtworkDetail({ id, navigate, artworks }: {
       </main>
     );
   }
+
+  const ownerArtist = artists.find((a) => a.userId === work.artistId);
 
   return (
     <main className="page artwork-detail">
@@ -374,6 +366,11 @@ function ArtworkDetail({ id, navigate, artworks }: {
           <Button onClick={() => setShowInquiry(true)} disabled={!work.available}>
             {work.available ? "Inquire" : "Sold"} <Icon name="arrow" />
           </Button>
+          {ownerArtist && (
+            <Button variant="outline" onClick={() => navigate("studio", "room", ownerArtist.id)}>
+              Visit {ownerArtist.name}'s room
+            </Button>
+          )}
         </div>
       </div>
       {showInquiry && <InquiryModal work={work} onClose={() => setShowInquiry(false)} />}
@@ -688,19 +685,32 @@ function Results({ navigate, submissions }: {
 }
 
 /* ============ STUDIO ============ */
-function StudioFeed({ posts, user, savedIds, toggleSaved, loading }: {
-  posts: Post[]; user: User | null; savedIds: string[]; toggleSaved: (id: string) => void; loading: boolean;
+function StudioFeed({ posts, user, savedIds, toggleSaved, loading, navigate }: {
+  posts: Post[]; user: User | null; savedIds: string[];
+  toggleSaved: (id: string) => void; loading: boolean;
+  navigate: (s: Section, screen: string, param?: string | number) => void;
 }) {
   const sorted = [...posts].sort((a, b) => b.createdAt - a.createdAt);
   if (loading) return <main className="feed page"><StateBlock kind="loading" message="Loading posts…" /></main>;
+
+  const intro = (
+    <div className="feed__intro">
+      <span className="kicker">Studio journal</span>
+      <h1>What we're<br /><em>making now.</em></h1>
+      <p>Shared in order, as it happens.<br />No rankings. No recommendations.</p>
+      {user && <p className="feed__you">Signed in as <strong>{user.name || user.email}</strong></p>}
+      <div style={{ marginTop: "1.5rem" }}>
+        <button className="button" onClick={() => navigate("studio", "post")}>
+          New post
+        </button>
+      </div>
+    </div>
+  );
+
   if (sorted.length === 0) {
     return (
       <main className="feed page">
-        <div className="feed__intro">
-          <span className="kicker">Studio journal</span>
-          <h1>What we're<br /><em>making now.</em></h1>
-          <p>Shared in order, as it happens.<br />No rankings. No recommendations.</p>
-        </div>
+        {intro}
         <div className="feed-list">
           <StateBlock kind="empty" message="No posts yet. Be the first to share." />
         </div>
@@ -709,17 +719,12 @@ function StudioFeed({ posts, user, savedIds, toggleSaved, loading }: {
   }
   return (
     <main className="feed page">
-      <div className="feed__intro">
-        <span className="kicker">Studio journal</span>
-        <h1>What we're<br /><em>making now.</em></h1>
-        <p>Shared in order, as it happens.<br />No rankings. No recommendations.</p>
-        {user && <p className="feed__you">Signed in as <strong>{user.name || user.email}</strong></p>}
-      </div>
+      {intro}
       <div className="feed-list">
         {sorted.map((post) => (
           <article className="post" key={post.id}>
             <header className="post__header">
-              <img src={post.avatar} alt="" />
+              {post.avatar ? <img src={post.avatar} alt="" /> : <div className="post__avatar-fallback">{post.artist.slice(0, 1)}</div>}
               <div><strong>{post.artist}</strong><span>{post.handle} · {post.time}</span></div>
               <Button variant="icon" className={savedIds.includes(post.id) ? "saved" : ""} onClick={() => toggleSaved(post.id)}>
                 <Icon name="bookmark" /><span className="sr-only">Save</span>
@@ -735,7 +740,118 @@ function StudioFeed({ posts, user, savedIds, toggleSaved, loading }: {
   );
 }
 
-function Composer({ user, navigate, onListed, myArtist }: {
+function NewPostComposer({ user, navigate, onPosted }: {
+  user: User | null;
+  navigate: (s: Section, screen: string, param?: string | number) => void;
+  onPosted: (p: Post) => void;
+}) {
+  const [mode, setMode] = useState<"WIP" | "Finished">("WIP");
+  const [caption, setCaption] = useState("");
+  const [medium, setMedium] = useState("");
+  const [image, setImage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!user) {
+    return (
+      <main className="page">
+        <StateBlock kind="empty" message="Sign in to share a post."
+          action={<Button variant="outline" onClick={() => navigate("auth", "signin")}>Sign in</Button>} />
+      </main>
+    );
+  }
+
+  const pickImage = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => setImage(reader.result as string);
+      reader.readAsDataURL(file);
+    };
+    input.click();
+  };
+
+  const submit = async () => {
+    if (!caption.trim() || !medium.trim() || !image) {
+      setError("Fill in caption, medium, and pick an image.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+
+    const newId = uid();
+    const post: Post = {
+      id: newId,
+      artist: user.name || user.email.split("@")[0],
+      handle: "@" + user.email.split("@")[0],
+      avatar: "",
+      image: image,
+      status: mode,
+      medium: medium.trim(),
+      caption: caption.trim(),
+      time: "Just now",
+      createdAt: Date.now(),
+    };
+
+    const ok = await savePost(post, image);
+    setBusy(false);
+    if (!ok) { setError("Could not save post. Try again."); return; }
+    onPosted(post);
+    navigate("studio", "feed");
+  };
+
+  return (
+    <main className="composer page">
+      <div className="composer__heading">
+        <span className="kicker">New studio post</span>
+        <h1>Share what's<br /><em>on your table.</em></h1>
+      </div>
+      <div className="composer__layout">
+        <section className="upload-zone" onClick={pickImage} style={{ cursor: "pointer" }}>
+          {image ? (
+            <img src={image} alt="Preview" style={{ maxHeight: "24rem", objectFit: "contain" }} />
+          ) : (
+            <>
+              <Icon name="image" size={32} />
+              <h2>Pick an image</h2>
+              <p>Click to upload. JPG, PNG or WEBP.</p>
+            </>
+          )}
+        </section>
+        <section className="composer-form">
+          <label>Caption
+            <textarea rows={5} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="Tell us what you're working through…" />
+          </label>
+          <label>Medium
+            <input value={medium} onChange={(e) => setMedium(e.target.value)} placeholder="e.g. Oil on linen" />
+          </label>
+          <fieldset>
+            <legend>State of work</legend>
+            <div className="segmented">
+              <button className={mode === "WIP" ? "active" : ""} onClick={() => setMode("WIP")}>
+                <span>WIP</span><small>Still in process</small>
+              </button>
+              <button className={mode === "Finished" ? "active" : ""} onClick={() => setMode("Finished")}>
+                <span>Finished</span><small>Ready to share</small>
+              </button>
+            </div>
+          </fieldset>
+          {error && <p className="auth__error">{error}</p>}
+          <div className="composer-form__footer">
+            <span>Posts appear chronologically.</span>
+            <Button onClick={submit} disabled={busy}>{busy ? "Posting…" : "Post to studio"} <Icon name="arrow" /></Button>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function ListWorkComposer({ user, navigate, onListed, myArtist }: {
   user: User | null;
   navigate: (s: Section, screen: string, param?: string | number) => void;
   onListed: (art: Artwork) => void;
@@ -921,11 +1037,12 @@ export default function App() {
   const { section, screen, param } = route;
 
   const [user, setUser] = useState<User | null>(null);
-  const [posts, setPosts] = useState<Post[]>(seedPosts);
+  const [posts, setPosts] = useState<Post[]>([]);
   const [postsLoading, setPostsLoading] = useState(true);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [artworks, setArtworks] = useState<Artwork[]>([]);
   const [artworksLoading, setArtworksLoading] = useState(true);
+  const [artists, setArtists] = useState<Artist[]>([]);
   const [savedIds, setSavedIds] = useState<string[]>([]);
   const [myArtist, setMyArtist] = useState<Artist | null>(null);
 
@@ -934,31 +1051,31 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  /* when user changes, load their artist profile */
   useEffect(() => {
     if (!user?.email) { setMyArtist(null); return; }
     import("./lib/supabase").then(({ supabase }) => {
       if (!supabase) return;
       supabase.auth.getUser().then(({ data }) => {
-        const uid = data.user?.id;
-        if (!uid) return;
-        loadMyArtist(uid).then(setMyArtist);
+        const uid2 = data.user?.id;
+        if (!uid2) return;
+        loadMyArtist(uid2).then(setMyArtist);
       });
     });
   }, [user]);
 
+  const loadArtistsAll = () =>
+    import("./lib/db").then(({ loadArtists }) => loadArtists().then(setArtists));
+
   useEffect(() => { loadSubmissions(BATTLE_ID).then(setSubmissions); }, []);
   useEffect(() => {
     setPostsLoading(true);
-    loadPosts().then((rows) => {
-      if (rows.length > 0) setPosts(rows);
-      setPostsLoading(false);
-    });
+    loadPosts().then((rows) => { setPosts(rows); setPostsLoading(false); });
   }, []);
   useEffect(() => {
     setArtworksLoading(true);
     loadArtworks().then((rows) => { setArtworks(rows); setArtworksLoading(false); });
   }, []);
+  useEffect(() => { loadArtistsAll(); }, []);
 
   const [lastMsg, setLastMsg] = useState<RoomMessage | null>(null);
   const [guestId] = useState(() => `app-${Math.random().toString(36).slice(2, 8)}`);
@@ -974,8 +1091,8 @@ export default function App() {
   const { send, present, connected } = useRealtimeRoom("047", presence, (m) => setLastMsg(m));
   const { phase, secondsLeft, prompt, startPhase } = useSyncedPhase(lastMsg, send, userId);
 
-  const artists = present.filter((p) => p.role === "artist");
-  const host = artists.length > 0 ? artists.reduce((a, b) => (a.joinedAt < b.joinedAt ? a : b)) : null;
+  const artistsInRoom = present.filter((p) => p.role === "artist");
+  const host = artistsInRoom.length > 0 ? artistsInRoom.reduce((a, b) => (a.joinedAt < b.joinedAt ? a : b)) : null;
   const isHost = host?.userId === userId;
 
   const realtime: Realtime = {
@@ -1020,13 +1137,14 @@ export default function App() {
   const wallScreen: WallScreen =
     screen === "detail" ? "detail" : screen === "artists" ? "artists" : "grid";
 
-  const isRoom = screen.startsWith("room/");
-  const roomId = isRoom ? screen.slice(5) : "";
+  /* room is now studio/room/<artistId> → screen === "room", param === artistId */
+  const isRoom = section === "studio" && screen === "room" && !!param;
+  const roomId = isRoom ? param : "";
 
   const isKnown =
     (section === "wall" && (wallScreen === "grid" || wallScreen === "detail" || wallScreen === "artists")) ||
     (section === "arena" && (screen === "lobby" || screen === "canvas" || screen === "watch" || screen === "voting" || screen === "results")) ||
-    (section === "studio" && (screen === "feed" || screen === "composer" || screen === "apply" || screen === "admin" || isRoom)) ||
+    (section === "studio" && (screen === "feed" || screen === "post" || screen === "composer" || screen === "apply" || screen === "admin" || isRoom)) ||
     section === "auth";
 
   return (
@@ -1042,14 +1160,21 @@ export default function App() {
           setActive={(id) => navigate("wall", id)}
         />
       )}
-      {!immersive && section === "studio" && (
+      {!immersive && section === "studio" && !isRoom && (
         <Subnav
           items={[
             { id: "feed" as StudioScreen, label: "Feed" },
+            { id: "post" as StudioScreen, label: "New post" },
             { id: "composer" as StudioScreen, label: "List a work" },
-            { id: "apply" as StudioScreen, label: "My artist profile" },
+            { id: "apply" as StudioScreen, label: "My profile" },
           ]}
-          active={(screen === "apply" ? "apply" : "feed") as StudioScreen}
+          active={(
+            screen === "feed" ? "feed" :
+            screen === "post" ? "post" :
+            screen === "composer" ? "composer" :
+            screen === "apply" ? "apply" :
+            "feed"
+          ) as StudioScreen}
           setActive={(id) => navigate("studio", id)}
         />
       )}
@@ -1071,7 +1196,7 @@ export default function App() {
         <WallGrid navigate={navigate} artworks={artworks} loading={artworksLoading} />
       )}
       {section === "wall" && wallScreen === "detail" && (
-        <ArtworkDetail id={param} navigate={navigate} artworks={artworks} />
+        <ArtworkDetail id={param} navigate={navigate} artworks={artworks} artists={artists} />
       )}
       {section === "wall" && wallScreen === "artists" && <ArtistDirectory navigate={navigate} />}
 
@@ -1088,10 +1213,24 @@ export default function App() {
       )}
 
       {section === "studio" && screen === "feed" && (
-        <StudioFeed posts={posts} user={user} savedIds={savedIds} toggleSaved={toggleSaved} loading={postsLoading} />
+        <StudioFeed
+          posts={posts}
+          user={user}
+          savedIds={savedIds}
+          toggleSaved={toggleSaved}
+          loading={postsLoading}
+          navigate={navigate}
+        />
+      )}
+      {section === "studio" && screen === "post" && (
+        <NewPostComposer
+          user={user}
+          navigate={navigate}
+          onPosted={(p) => setPosts((prev) => [p, ...prev])}
+        />
       )}
       {section === "studio" && screen === "composer" && (
-        <Composer
+        <ListWorkComposer
           user={user}
           navigate={navigate}
           onListed={(a) => setArtworks((prev) => [a, ...prev])}
@@ -1105,7 +1244,7 @@ export default function App() {
         <AdminPanel user={user} />
       )}
       {section === "studio" && isRoom && (
-        <ArtistRoom artistId={roomId} user={user} navigate={navigate} />
+        <ArtistRoom artistId={roomId} user={user} myArtist={myArtist} navigate={navigate} />
       )}
 
       {section === "auth" && (
