@@ -352,6 +352,50 @@ function rowToArtwork(row: ArtworkRow): Artwork {
 }
 
 /* =========================================================
+   SAVED ARTWORKS (collection)
+========================================================= */
+
+export async function loadMySavedArtworkIds(): Promise<string[]> {
+  if (!supabase) return [];
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (!userId) return [];
+
+  const { data, error } = await supabase
+    .from("saved_artworks")
+    .select("artwork_id")
+    .eq("user_id", userId);
+  if (error || !data) return [];
+  return data.map((r: { artwork_id: string }) => r.artwork_id);
+}
+
+export async function setArtworkSaved(
+  artworkId: string,
+  saved: boolean
+): Promise<boolean> {
+  if (!supabase) return false;
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (!userId) return false;
+
+  if (saved) {
+    const { error } = await supabase.from("saved_artworks").insert({
+      user_id: userId,
+      artwork_id: artworkId,
+    });
+    if (error && error.code !== "23505") return false;
+  } else {
+    const { error } = await supabase
+      .from("saved_artworks")
+      .delete()
+      .eq("user_id", userId)
+      .eq("artwork_id", artworkId);
+    if (error) return false;
+  }
+  return true;
+}
+
+/* =========================================================
    ARTISTS
 ========================================================= */
 

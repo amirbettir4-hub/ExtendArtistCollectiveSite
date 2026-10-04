@@ -3,6 +3,7 @@ import { TimelapseReplay } from "./components/TimelapseReplay";
 import { LiveCanvas, type LiveCanvasHandle } from "./components/LiveCanvas";
 import { ArenaChat } from "./components/ArenaChat";
 import { ArtistDirectory, ArtistRoom, ArtistApply, AdminPanel } from "./components/ArtistPages";
+import { SavedPage } from "./components/SavedPage";
 import {
   uid,
   type Submission, type Post, type User,
@@ -17,13 +18,14 @@ import {
   saveInquiry,
   loadArtworks, saveArtwork, type Artwork,
   loadMyArtist, type Artist,
+  loadMySavedArtworkIds, setArtworkSaved,
 } from "./lib/db";
 import { signInWithMagicLink, signOut as authSignOut, onAuthChange } from "./lib/auth";
 
 /* ============ TYPES ============ */
 type Section = "wall" | "studio" | "arena" | "auth";
 type ArenaScreen = "lobby" | "canvas" | "watch" | "voting" | "results";
-type StudioScreen = "feed" | "post" | "composer" | "apply" | "admin" | "room";
+type StudioScreen = "feed" | "post" | "composer" | "apply" | "admin" | "room" | "saved";
 type WallScreen = "grid" | "detail" | "artists";
 type AuthScreen = "signin" | "signup";
 type Tool = "brush" | "eraser";
@@ -192,10 +194,13 @@ function Subnav<T extends string>({ items, active, setActive }: {
 }
 
 /* ============ WALL ============ */
-function WallGrid({ navigate, artworks, loading }: {
+function WallGrid({ navigate, artworks, loading, savedIds, onToggleSaved, user }: {
   navigate: (s: Section, screen: string, param?: string | number) => void;
   artworks: Work[];
   loading: boolean;
+  savedIds: string[];
+  onToggleSaved: (id: string) => void;
+  user: User | null;
 }) {
   const [medium, setMedium] = useState("All");
   const [availableOnly, setAvailableOnly] = useState(false);
@@ -204,7 +209,6 @@ function WallGrid({ navigate, artworks, loading }: {
   const [sort, setSort] = useState<SortMode>("newest");
 
   const mediums = ["All", ...Array.from(new Set(artworks.map((w) => w.medium)))];
-
   const query = search.trim().toLowerCase();
 
   const filtered = artworks.filter((w) => {
@@ -305,16 +309,34 @@ function WallGrid({ navigate, artworks, loading }: {
         />
       ) : (
         <div className="wall-grid">
-          {sorted.map((work) => (
-            <button key={work.id} className="artwork-cell" onClick={() => navigate("wall", "detail", work.id)}>
-              <div className="artwork-cell__mat"><img src={work.image} alt={work.title} /></div>
-              <div className="artwork-cell__meta">
-                <strong>{work.title}</strong>
-                <span>{work.artistName}</span>
+          {sorted.map((work) => {
+            const isSaved = savedIds.includes(work.id);
+            return (
+              <div key={work.id} className="artwork-cell artwork-cell--static">
+                <button
+                  className="artwork-cell__mat"
+                  onClick={() => navigate("wall", "detail", work.id)}
+                  style={{ border: 0, padding: 0, background: "transparent", cursor: "pointer" }}
+                >
+                  <img src={work.image} alt={work.title} />
+                </button>
+                <div className="artwork-cell__meta">
+                  <strong>{work.title}</strong>
+                  <span>{work.artistName}</span>
+                </div>
+                {work.available && <i className="availability-dot" />}
+                {user && (
+                  <button
+                    className={`artwork-cell__save ${isSaved ? "saved" : ""}`}
+                    onClick={(e) => { e.stopPropagation(); onToggleSaved(work.id); }}
+                    aria-label={isSaved ? "Remove from saved" : "Save to collection"}
+                  >
+                    <Icon name="bookmark" size={16} />
+                  </button>
+                )}
               </div>
-              {work.available && <i className="availability-dot" />}
-            </button>
-          ))}
+            );
+          })}
         </div>
       )}
     </main>
@@ -381,11 +403,14 @@ function InquiryModal({ work, onClose }: { work: Work; onClose: () => void }) {
   );
 }
 
-function ArtworkDetail({ id, navigate, artworks, artists }: {
+function ArtworkDetail({ id, navigate, artworks, artists, savedIds, onToggleSaved, user }: {
   id: string;
   navigate: (s: Section, screen: string, param?: string | number) => void;
   artworks: Work[];
   artists: Artist[];
+  savedIds: string[];
+  onToggleSaved: (id: string) => void;
+  user: User | null;
 }) {
   const [showInquiry, setShowInquiry] = useState(false);
   const work = artworks.find((w) => w.id === id);
@@ -400,6 +425,7 @@ function ArtworkDetail({ id, navigate, artworks, artists }: {
   }
 
   const ownerArtist = artists.find((a) => a.userId === work.artistId);
+  const isSaved = savedIds.includes(work.id);
 
   return (
     <main className="page artwork-detail">
@@ -421,6 +447,11 @@ function ArtworkDetail({ id, navigate, artworks, artists }: {
           <Button onClick={() => setShowInquiry(true)} disabled={!work.available}>
             {work.available ? "Inquire" : "Sold"} <Icon name="arrow" />
           </Button>
+          {user && (
+            <Button variant="outline" onClick={() => onToggleSaved(work.id)}>
+              {isSaved ? "Remove from collection" : "Save to collection"}
+            </Button>
+          )}
           {ownerArtist && (
             <Button variant="outline" onClick={() => navigate("studio", "room", ownerArtist.id)}>
               Visit {ownerArtist.name}'s room
@@ -1098,7 +1129,8 @@ export default function App() {
   const [artworks, setArtworks] = useState<Artwork[]>([]);
   const [artworksLoading, setArtworksLoading] = useState(true);
   const [artists, setArtists] = useState<Artist[]>([]);
-  const [savedIds, setSavedIds] = useState<string[]>([]);
+  const [postSaves, setPostSaves] = useState<string[]>([]);
+  const [savedArtworkIds, setSavedArtworkIds] = useState<string[]>([]);
   const [myArtist, setMyArtist] = useState<Artist | null>(null);
 
   useEffect(() => {
@@ -1107,7 +1139,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user?.email) { setMyArtist(null); return; }
+    if (!user?.email) {
+      setMyArtist(null);
+      setSavedArtworkIds([]);
+      return;
+    }
     import("./lib/supabase").then(({ supabase }) => {
       if (!supabase) return;
       supabase.auth.getUser().then(({ data }) => {
@@ -1116,6 +1152,7 @@ export default function App() {
         loadMyArtist(uid2).then(setMyArtist);
       });
     });
+    loadMySavedArtworkIds().then(setSavedArtworkIds);
   }, [user]);
 
   const loadArtistsAll = () =>
@@ -1166,8 +1203,26 @@ export default function App() {
     }
   }, [lastMsg]);
 
-  const toggleSaved = (id: string) =>
-    setSavedIds((v) => (v.includes(id) ? v.filter((x) => x !== id) : [...v, id]));
+  const togglePostSave = (id: string) =>
+    setPostSaves((v) => (v.includes(id) ? v.filter((x) => x !== id) : [...v, id]));
+
+  const toggleArtworkSaved = async (artworkId: string) => {
+    if (!user) {
+      navigate("auth", "signin");
+      return;
+    }
+    const isSaved = savedArtworkIds.includes(artworkId);
+    setSavedArtworkIds((v) =>
+      isSaved ? v.filter((x) => x !== artworkId) : [...v, artworkId]
+    );
+    const ok = await setArtworkSaved(artworkId, !isSaved);
+    if (!ok) {
+      setSavedArtworkIds((v) =>
+        isSaved ? [...v, artworkId] : v.filter((x) => x !== artworkId)
+      );
+      alert("Could not update collection. Try again.");
+    }
+  };
 
   const addSubmission = async (s: Submission) => {
     setSubmissions((v) => [...v, s]);
@@ -1198,7 +1253,7 @@ export default function App() {
   const isKnown =
     (section === "wall" && (wallScreen === "grid" || wallScreen === "detail" || wallScreen === "artists")) ||
     (section === "arena" && (screen === "lobby" || screen === "canvas" || screen === "watch" || screen === "voting" || screen === "results")) ||
-    (section === "studio" && (screen === "feed" || screen === "post" || screen === "composer" || screen === "apply" || screen === "admin" || isRoom)) ||
+    (section === "studio" && (screen === "feed" || screen === "post" || screen === "composer" || screen === "apply" || screen === "admin" || screen === "saved" || isRoom)) ||
     section === "auth";
 
   return (
@@ -1220,12 +1275,14 @@ export default function App() {
             { id: "feed" as StudioScreen, label: "Feed" },
             { id: "post" as StudioScreen, label: "New post" },
             { id: "composer" as StudioScreen, label: "List a work" },
+            { id: "saved" as StudioScreen, label: "Collection" },
             { id: "apply" as StudioScreen, label: "My profile" },
           ]}
           active={(
             screen === "feed" ? "feed" :
             screen === "post" ? "post" :
             screen === "composer" ? "composer" :
+            screen === "saved" ? "saved" :
             screen === "apply" ? "apply" :
             "feed"
           ) as StudioScreen}
@@ -1247,10 +1304,25 @@ export default function App() {
       )}
 
       {section === "wall" && wallScreen === "grid" && (
-        <WallGrid navigate={navigate} artworks={artworks} loading={artworksLoading} />
+        <WallGrid
+          navigate={navigate}
+          artworks={artworks}
+          loading={artworksLoading}
+          savedIds={savedArtworkIds}
+          onToggleSaved={toggleArtworkSaved}
+          user={user}
+        />
       )}
       {section === "wall" && wallScreen === "detail" && (
-        <ArtworkDetail id={param} navigate={navigate} artworks={artworks} artists={artists} />
+        <ArtworkDetail
+          id={param}
+          navigate={navigate}
+          artworks={artworks}
+          artists={artists}
+          savedIds={savedArtworkIds}
+          onToggleSaved={toggleArtworkSaved}
+          user={user}
+        />
       )}
       {section === "wall" && wallScreen === "artists" && <ArtistDirectory navigate={navigate} />}
 
@@ -1270,8 +1342,8 @@ export default function App() {
         <StudioFeed
           posts={posts}
           user={user}
-          savedIds={savedIds}
-          toggleSaved={toggleSaved}
+          savedIds={postSaves}
+          toggleSaved={togglePostSave}
           loading={postsLoading}
           navigate={navigate}
         />
@@ -1289,6 +1361,14 @@ export default function App() {
           navigate={navigate}
           onListed={(a) => setArtworks((prev) => [a, ...prev])}
           myArtist={myArtist}
+        />
+      )}
+      {section === "studio" && screen === "saved" && (
+        <SavedPage
+          artworks={artworks}
+          savedIds={savedArtworkIds}
+          onUnsave={toggleArtworkSaved}
+          navigate={navigate}
         />
       )}
       {section === "studio" && screen === "apply" && (
